@@ -1,0 +1,50 @@
+name: Build Android TV (TWA/Bubblewrap)
+
+# Empacota o site já publicado (www.pixgo.qzz.io) como TWA para Android TV,
+# Google TV, Fire TV e TV Box — mesma APK serve os quatro, todos Android.
+# Não usa nenhuma credencial nova: a keystore é a que está commitada em
+# tv/android/android.keystore (self-signed, gerada uma única vez, senha em
+# tv/android/twa-manifest.json) — suficiente para sideload/instalação
+# directa, que é o que estas plataformas usam.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'tv/android/**'
+      - '.github/workflows/build-android-tv.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar Bubblewrap CLI
+        run: npm install -g @bubblewrap/cli
+
+      # twa-manifest.json e android.keystore já estão commitados em
+      # tv/android/ — build não-interactivo, sem prompts.
+      - name: Build TWA (APK + AAB)
+        working-directory: tv/android
+        run: |
+          bubblewrap build --skipPwaValidation
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixgo-android-tv
+          path: |
+            tv/android/app-release-signed.apk
+            tv/android/app-release-bundle.aab
+          if-no-files-found: warn

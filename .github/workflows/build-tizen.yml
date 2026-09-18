@@ -1,0 +1,49 @@
+name: Build Samsung Tizen (.wgt)
+
+# Empacota tv/tizen/ (wrapper fino que carrega www.pixgo.qzz.io — regra 10/13
+# do plano, não duplica a app) como widget .wgt para Samsung Tizen TV.
+# Certificado de autor gerado no próprio runner (perfil "author-default"),
+# suficiente para sideload/teste — sem secrets novos, como pedido.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'tv/tizen/**'
+      - '.github/workflows/build-tizen.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar Tizen Studio CLI (headless)
+        run: |
+          curl -sSL -o /tmp/tizen-studio.bin \
+            "https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin"
+          chmod +x /tmp/tizen-studio.bin
+          /tmp/tizen-studio.bin --accept-license /opt/tizen-studio
+          echo "/opt/tizen-studio/tools/ide/bin" >> "$GITHUB_PATH"
+          echo "/opt/tizen-studio/tools" >> "$GITHUB_PATH"
+
+      - name: Gerar certificado de autor (self-signed, único para este build)
+        run: |
+          tizen certificate -a pixgo-tv -p pixgotv2026 -c MZ -s Maputo -ct Maputo -o Pixgo -n "Pixgo TV" -e support@pixgo.qzz.io -f pixgo-author
+          tizen security-profiles add -n pixgo-tv -a "$HOME/tizen-studio-data/keystore/author/pixgo-author.p12" -p pixgotv2026
+
+      - name: Build + Package (.wgt)
+        run: |
+          tizen build-web -- tv/tizen -out tv/tizen/.buildResult
+          tizen package -t wgt -s pixgo-tv -- tv/tizen/.buildResult -o tv/tizen/out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixgo-tizen-wgt
+          path: tv/tizen/out/*.wgt
+          if-no-files-found: warn
