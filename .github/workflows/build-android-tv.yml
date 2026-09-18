@@ -68,16 +68,21 @@ jobs:
           ls -la "$ANDROID_HOME/cmdline-tools/"
 
       # twa-manifest.json e android.keystore já estão commitados em
-      # tv/android/ — nunca correu "bubblewrap init" aqui, por isso o build
-      # pergunta se quer (re)gerar o projeto Android a partir do manifest
-      # ("No checksum file was found..."). "yes |" aceita esse e qualquer
-      # prompt semelhante automaticamente — regenerar é idempotente e
-      # esperado em CI (não há projeto Android gerado commitado, só o
-      # manifest que o descreve).
+      # tv/android/ — "bubblewrap init"/"build" são interactivos por
+      # definição (pedem confirmação de regeneração do projecto) e travam
+      # em loop infinito em CI sem terminal, mesmo com "yes |" à frente
+      # (confirmado em produção neste workflow). init-twa.js chama a API do
+      # @bubblewrap/core directamente (mesmo motor, sem o CLI interactivo)
+      # e escreve o checksum que falta, para "bubblewrap build" nunca
+      # precisar perguntar nada.
+      - name: Gerar projecto Android a partir do twa-manifest.json
+        working-directory: tv/android
+        run: node init-twa.js
+
       - name: Build TWA (APK + AAB)
         working-directory: tv/android
         run: |
-          yes | bubblewrap build --skipPwaValidation
+          bubblewrap build --skipPwaValidation
 
       - uses: actions/upload-artifact@v4
         with:
