@@ -2,8 +2,14 @@ name: Build Samsung Tizen (.wgt)
 
 # Empacota tv/tizen/ (wrapper fino que carrega www.pixgo.qzz.io — regra 10/13
 # do plano, não duplica a app) como widget .wgt para Samsung Tizen TV.
-# Certificado de autor gerado no próprio runner (perfil "author-default"),
-# suficiente para sideload/teste — sem secrets novos, como pedido.
+#
+# Tizen Studio 5.6 (não 6.x): a 6.1 tem um bug confirmado e por resolver da
+# própria Samsung — "tizen build-web" falha sempre com NoClassDefFoundError
+# org.eclipse.core.runtime.Plugin (github.com/Samsung/tizen-docs#2100,
+# "funcionava no 6.0, quebrou no 6.1"). A 5.6 é a versão usada num workflow
+# real em produção (reisxd/TizenBrew) — instalação em $GITHUB_WORKSPACE
+# (sempre escrevível, ao contrário de /opt) e certificado de autor gerado
+# no próprio runner, sem secrets novos.
 on:
   workflow_dispatch:
   push:
@@ -11,6 +17,9 @@ on:
     paths:
       - 'tv/tizen/**'
       - '.github/workflows/build-tizen.yml'
+
+env:
+  TIZEN_STUDIO_VER: '5.6'
 
 jobs:
   build:
@@ -26,31 +35,25 @@ jobs:
       - name: Instalar Tizen Studio CLI (headless)
         run: |
           curl -sSL -o /tmp/tizen-studio.bin \
-            "https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin"
+            "https://download.tizen.org/sdk/Installer/tizen-studio_${TIZEN_STUDIO_VER}/web-cli_Tizen_Studio_${TIZEN_STUDIO_VER}_ubuntu-64.bin"
           chmod +x /tmp/tizen-studio.bin
-          # Sintaxe real do instalador (confirmado via saída de erro em CI):
-          # tizen-web-cli_XXX [--accept-license] [--no-java-check] [<installation path>]
-          # -o NÃO existe — o caminho é posicional. --no-java-check evita a
-          # deteção automática de Java do instalador (que falhava com
-          # "rm: cannot remove .../jdk") já que o JDK 17 vem do passo anterior.
-          # /opt não é escrevível pelo user "runner" nos runners GH-hosted
-          # ("Invalid the destination directory") — instala em $HOME.
-          /tmp/tizen-studio.bin --accept-license --no-java-check "$HOME/tizen-studio"
-          echo "--- conteúdo de \$HOME/tizen-studio (diagnóstico) ---"
-          ls -la "$HOME/tizen-studio" || echo "AVISO: $HOME/tizen-studio não foi criado pelo instalador"
-          find "$HOME/tizen-studio" -maxdepth 3 -iname "tizen" -type f 2>/dev/null || true
-          echo "$HOME/tizen-studio/tools/ide/bin" >> "$GITHUB_PATH"
-          echo "$HOME/tizen-studio/tools" >> "$GITHUB_PATH"
+          # Caminho posicional (sem -o, essa flag não existe neste instalador)
+          # dentro de $GITHUB_WORKSPACE — sempre escrevível pelo runner,
+          # ao contrário de /opt ("Invalid the destination directory").
+          /tmp/tizen-studio.bin --accept-license "$GITHUB_WORKSPACE/tizen-studio"
+          echo "$GITHUB_WORKSPACE/tizen-studio/tools/ide/bin" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/tizen-studio/tools" >> "$GITHUB_PATH"
 
       - name: Verificar instalação
         run: |
           which tizen || (echo "ERRO: binário 'tizen' não encontrado no PATH — ver diagnóstico do passo anterior" && exit 1)
-          tizen version || true
+          tizen version
 
       - name: Gerar certificado de autor (self-signed, único para este build)
         run: |
           tizen certificate -a pixgo-tv -p pixgotv2026 -c MZ -s Maputo -ct Maputo -o Pixgo -n "Pixgo TV" -e support@pixgo.qzz.io -f pixgo-author
-          tizen security-profiles add -n pixgo-tv -a "$HOME/tizen-studio-data/keystore/author/pixgo-author.p12" -p pixgotv2026
+          tizen security-profiles add -n pixgo-tv -a "$GITHUB_WORKSPACE/tizen-studio-data/keystore/author/pixgo-author.p12" -p pixgotv2026
+          tizen cli-config "profiles.path=$GITHUB_WORKSPACE/tizen-studio-data/profile/profiles.xml"
 
       - name: Build + Package (.wgt)
         run: |
