@@ -81,6 +81,12 @@ jobs:
 
       - name: Build TWA (APK + AAB)
         working-directory: tv/android
+        env:
+          # Bubblewrap não lê a password da keystore do twa-manifest.json —
+          # só aceita via env var (documentado no README do @bubblewrap/cli),
+          # daí o prompt interactivo "Password for the Key Store" travar em CI.
+          BUBBLEWRAP_KEYSTORE_PASSWORD: pixgotv2026
+          BUBBLEWRAP_KEY_PASSWORD: pixgotv2026
         run: |
           bubblewrap build --skipPwaValidation
 
