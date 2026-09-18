@@ -1,4 +1,4 @@
-// public/sw.js — Pixgo Service Worker v6
+// public/sw.js — Pixgo Service Worker v7
 // Strategy: Cache-first for static, Network-first for API
 // FIX v3: Offline auth — /api/auth/me cached so PWA não redireciona para login sem rede
 // FIX v4 (BUG): tentativa de intercetar /api/ cross-origin partiu tudo
@@ -10,8 +10,14 @@
 //         QUALQUER página não cacheada — agora só navegações reais falham
 //         para /offline (página estilizada com atalho para Downloads);
 //         assets/API mantêm o comportamento anterior sem alteração.
+// FIX v7: /main/watch/[id]?offline=1 nunca funcionava 100% offline (rota
+//         dinâmica do App Router — o payload da rota para um [id] nunca
+//         visitado antes precisa de rede na 1ª vez, mesmo sendo Client
+//         Component). Downloads agora abrem em /offline-player (rota fixa,
+//         sem segmento dinâmico, id por query string) — pré-cacheada aqui,
+//         100% IndexedDB, nunca chama nenhuma API.
 
-const CACHE_VERSION = 'pixgo-v6';
+const CACHE_VERSION = 'pixgo-v7';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;
 const AUTH_CACHE    = `${CACHE_VERSION}-auth`;
 
@@ -19,6 +25,7 @@ const STATIC_URLS = [
   '/',
   '/main',
   '/main/downloads',
+  '/offline-player',
   '/auth/login',
   '/auth/register',
   '/offline',

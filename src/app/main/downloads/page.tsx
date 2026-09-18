@@ -209,9 +209,9 @@ export default function DownloadsPage() {
                 onBlur={(e) => {
                   if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocusedId(null);
                 }}
-                onClick={() => router.push(`/main/watch/${d.contentId}?offline=1`)}
+                onClick={() => router.push(`/offline-player?id=${d.contentId}`)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/main/watch/${d.contentId}?offline=1`); }
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/offline-player?id=${d.contentId}`); }
                   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); remove(d.contentId, e); }
                 }}
               >
