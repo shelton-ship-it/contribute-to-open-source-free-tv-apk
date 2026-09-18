@@ -18,8 +18,6 @@
     "path": "./android.keystore",
     "alias": "android"
   },
-  "signingKeyStorePassword": "pixgotv2026",
-  "signingKeyPassword": "pixgotv2026",
   "appVersionName": "1.0.0",
   "appVersionCode": 1,
   "shortcuts": [
