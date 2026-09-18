@@ -56,9 +56,15 @@ jobs:
           tizen cli-config "profiles.path=$GITHUB_WORKSPACE/tizen-studio-data/profile/profiles.xml"
 
       - name: Build + Package (.wgt)
+        working-directory: tv/tizen
         run: |
-          tizen build-web -- tv/tizen -out tv/tizen/.buildResult
-          tizen package -t wgt -s pixgo-tv -o tv/tizen/out -- tv/tizen/.buildResult
+          # working-directory já é tv/tizen — sem prefixar o caminho outra
+          # vez (o "-- tv/tizen -out tv/tizen/.buildResult" anterior
+          # resolvia .buildResult DENTRO do próprio tv/tizen, duplicando o
+          # caminho: tv/tizen/tv/tizen/.buildResult — daí o package
+          # seguinte nunca encontrar a pasta certa).
+          tizen build-web -out .buildResult
+          tizen package -t wgt -s pixgo-tv -o out -- .buildResult
 
       - uses: actions/upload-artifact@v4
         with:
