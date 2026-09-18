@@ -68,11 +68,16 @@ jobs:
           ls -la "$ANDROID_HOME/cmdline-tools/"
 
       # twa-manifest.json e android.keystore já estão commitados em
-      # tv/android/ — build não-interactivo, sem prompts.
+      # tv/android/ — nunca correu "bubblewrap init" aqui, por isso o build
+      # pergunta se quer (re)gerar o projeto Android a partir do manifest
+      # ("No checksum file was found..."). "yes |" aceita esse e qualquer
+      # prompt semelhante automaticamente — regenerar é idempotente e
+      # esperado em CI (não há projeto Android gerado commitado, só o
+      # manifest que o descreve).
       - name: Build TWA (APK + AAB)
         working-directory: tv/android
         run: |
-          bubblewrap build --skipPwaValidation
+          yes | bubblewrap build --skipPwaValidation
 
       - uses: actions/upload-artifact@v4
         with:
