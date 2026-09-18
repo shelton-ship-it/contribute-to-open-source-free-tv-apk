@@ -36,6 +36,21 @@ jobs:
       - name: Instalar Bubblewrap CLI
         run: npm install -g @bubblewrap/cli
 
+      # Sem isto, "bubblewrap build" pergunta interativamente "queres que eu
+      # instale o JDK?" (sem terminal em CI, isso mata o processo — exit 130
+      # visto no log). Aponta directamente para o JDK/SDK já instalados nos
+      # passos anteriores, evitando a pergunta.
+      - name: Configurar Bubblewrap (usar JDK/SDK já instalados)
+        run: |
+          mkdir -p "$HOME/.bubblewrap"
+          cat > "$HOME/.bubblewrap/config.json" << CFGEOF
+          {
+            "jdkPath": "${JAVA_HOME}",
+            "androidSdkPath": "${ANDROID_HOME}"
+          }
+          CFGEOF
+          cat "$HOME/.bubblewrap/config.json"
+
       # twa-manifest.json e android.keystore já estão commitados em
       # tv/android/ — build não-interactivo, sem prompts.
       - name: Build TWA (APK + AAB)
