@@ -9,6 +9,5 @@
   "largeIcon": "icon.png",
   "resolution": "1920x1080",
   "iconColor": "#0a0a0c",
-  "splashBackground": "splash.png",
   "requiredPermissions": ["network.internet"]
 }
