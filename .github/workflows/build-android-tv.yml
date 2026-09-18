@@ -50,6 +50,13 @@ jobs:
             VER_DIR=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/ 2>/dev/null | grep -v latest | head -n1)
             ln -s "$VER_DIR" "$ANDROID_HOME/cmdline-tools/latest"
           fi
+          # Confirmado no código-fonte do Bubblewrap (AndroidSdkTools.validatePath):
+          # exige <SDK>/tools OU <SDK>/bin na RAIZ do SDK — não cmdline-tools/latest.
+          # SDKs modernos (cmdline-tools-only) não têm nenhum dos dois por omissão,
+          # daí o "The provided androidSdk isn't correct" mesmo com o SDK real lá.
+          if [ ! -e "$ANDROID_HOME/bin" ]; then
+            ln -s cmdline-tools/latest/bin "$ANDROID_HOME/bin"
+          fi
           mkdir -p "$HOME/.bubblewrap"
           cat > "$HOME/.bubblewrap/config.json" << CFGEOF
           {
