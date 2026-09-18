@@ -28,9 +28,20 @@ jobs:
           curl -sSL -o /tmp/tizen-studio.bin \
             "https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin"
           chmod +x /tmp/tizen-studio.bin
-          /tmp/tizen-studio.bin --accept-license /opt/tizen-studio
+          # -o define o destino explicitamente — sem esta flag o instalador
+          # ignora o argumento posicional e cai no default ($HOME/tizen-studio),
+          # que é a causa mais provável do "tizen: command not found" anterior.
+          /tmp/tizen-studio.bin --accept-license -o /opt/tizen-studio
+          echo "--- conteúdo de /opt/tizen-studio (diagnóstico) ---"
+          ls -la /opt/tizen-studio || echo "AVISO: /opt/tizen-studio não foi criado pelo instalador"
+          find /opt/tizen-studio -maxdepth 3 -iname "tizen" -type f 2>/dev/null || true
           echo "/opt/tizen-studio/tools/ide/bin" >> "$GITHUB_PATH"
           echo "/opt/tizen-studio/tools" >> "$GITHUB_PATH"
+
+      - name: Verificar instalação
+        run: |
+          which tizen || (echo "ERRO: binário 'tizen' não encontrado no PATH — ver diagnóstico do passo anterior" && exit 1)
+          tizen version || true
 
       - name: Gerar certificado de autor (self-signed, único para este build)
         run: |
