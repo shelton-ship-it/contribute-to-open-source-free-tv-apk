@@ -58,7 +58,7 @@ jobs:
       - name: Build + Package (.wgt)
         run: |
           tizen build-web -- tv/tizen -out tv/tizen/.buildResult
-          tizen package -t wgt -s pixgo-tv -- tv/tizen/.buildResult -o tv/tizen/out
+          tizen package -t wgt -s pixgo-tv -o tv/tizen/out -- tv/tizen/.buildResult
 
       - uses: actions/upload-artifact@v4
         with:
