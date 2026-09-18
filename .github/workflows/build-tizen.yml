@@ -28,10 +28,12 @@ jobs:
           curl -sSL -o /tmp/tizen-studio.bin \
             "https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin"
           chmod +x /tmp/tizen-studio.bin
-          # -o define o destino explicitamente — sem esta flag o instalador
-          # ignora o argumento posicional e cai no default ($HOME/tizen-studio),
-          # que é a causa mais provável do "tizen: command not found" anterior.
-          /tmp/tizen-studio.bin --accept-license -o /opt/tizen-studio
+          # Sintaxe real do instalador (confirmado via saída de erro em CI):
+          # tizen-web-cli_XXX [--accept-license] [--no-java-check] [<installation path>]
+          # -o NÃO existe — o caminho é posicional. --no-java-check evita a
+          # deteção automática de Java do instalador (que falhava com
+          # "rm: cannot remove .../jdk") já que o JDK 17 vem do passo anterior.
+          /tmp/tizen-studio.bin --accept-license --no-java-check /opt/tizen-studio
           echo "--- conteúdo de /opt/tizen-studio (diagnóstico) ---"
           ls -la /opt/tizen-studio || echo "AVISO: /opt/tizen-studio não foi criado pelo instalador"
           find /opt/tizen-studio -maxdepth 3 -iname "tizen" -type f 2>/dev/null || true
