@@ -33,12 +33,14 @@ jobs:
           # -o NÃO existe — o caminho é posicional. --no-java-check evita a
           # deteção automática de Java do instalador (que falhava com
           # "rm: cannot remove .../jdk") já que o JDK 17 vem do passo anterior.
-          /tmp/tizen-studio.bin --accept-license --no-java-check /opt/tizen-studio
-          echo "--- conteúdo de /opt/tizen-studio (diagnóstico) ---"
-          ls -la /opt/tizen-studio || echo "AVISO: /opt/tizen-studio não foi criado pelo instalador"
-          find /opt/tizen-studio -maxdepth 3 -iname "tizen" -type f 2>/dev/null || true
-          echo "/opt/tizen-studio/tools/ide/bin" >> "$GITHUB_PATH"
-          echo "/opt/tizen-studio/tools" >> "$GITHUB_PATH"
+          # /opt não é escrevível pelo user "runner" nos runners GH-hosted
+          # ("Invalid the destination directory") — instala em $HOME.
+          /tmp/tizen-studio.bin --accept-license --no-java-check "$HOME/tizen-studio"
+          echo "--- conteúdo de \$HOME/tizen-studio (diagnóstico) ---"
+          ls -la "$HOME/tizen-studio" || echo "AVISO: $HOME/tizen-studio não foi criado pelo instalador"
+          find "$HOME/tizen-studio" -maxdepth 3 -iname "tizen" -type f 2>/dev/null || true
+          echo "$HOME/tizen-studio/tools/ide/bin" >> "$GITHUB_PATH"
+          echo "$HOME/tizen-studio/tools" >> "$GITHUB_PATH"
 
       - name: Verificar instalação
         run: |
