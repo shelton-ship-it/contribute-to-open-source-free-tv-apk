@@ -42,6 +42,14 @@ jobs:
       # passos anteriores, evitando a pergunta.
       - name: Configurar Bubblewrap (usar JDK/SDK já instalados)
         run: |
+          # O setup-android instala em cmdline-tools/<versão> (ex.: 16.0),
+          # não em cmdline-tools/latest — mas a validação do Bubblewrap
+          # exige especificamente esse nome ("androidSdk isn't correct"
+          # mesmo com o SDK real lá instalado). Cria o link em falta.
+          if [ ! -e "$ANDROID_HOME/cmdline-tools/latest" ]; then
+            VER_DIR=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/ 2>/dev/null | grep -v latest | head -n1)
+            ln -s "$VER_DIR" "$ANDROID_HOME/cmdline-tools/latest"
+          fi
           mkdir -p "$HOME/.bubblewrap"
           cat > "$HOME/.bubblewrap/config.json" << CFGEOF
           {
@@ -50,6 +58,7 @@ jobs:
           }
           CFGEOF
           cat "$HOME/.bubblewrap/config.json"
+          ls -la "$ANDROID_HOME/cmdline-tools/"
 
       # twa-manifest.json e android.keystore já estão commitados em
       # tv/android/ — build não-interactivo, sem prompts.
