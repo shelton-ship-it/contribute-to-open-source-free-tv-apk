@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -65,6 +65,13 @@ jobs:
           # seguinte nunca encontrar a pasta certa).
           tizen build-web -out .buildResult
           tizen package -t wgt -s pixgo-tv -o out -- .buildResult
+
+      - name: Mostrar log do Tizen CLI em caso de falha
+        if: failure()
+        run: |
+          echo "--- tizen-studio-data/cli/logs/cli.log ---"
+          cat "$GITHUB_WORKSPACE/tizen-studio-data/cli/logs/cli.log" 2>/dev/null || echo "(log não encontrado nesse caminho)"
+          find "$GITHUB_WORKSPACE/tizen-studio-data" -iname "*.log" -exec sh -c 'echo "--- {} ---"; cat "{}"' \; 2>/dev/null
 
       - uses: actions/upload-artifact@v4
         with:
