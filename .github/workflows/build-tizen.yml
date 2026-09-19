@@ -52,8 +52,34 @@ jobs:
       - name: Gerar certificado de autor (self-signed, único para este build)
         run: |
           tizen certificate -a pixgo-tv -p pixgotv2026 -c MZ -s Maputo -ct Maputo -o Pixgo -n "Pixgo TV" -e support@pixgo.qzz.io -f pixgo-author
-          tizen security-profiles add -n pixgo-tv -a "$GITHUB_WORKSPACE/tizen-studio-data/keystore/author/pixgo-author.p12" -p pixgotv2026
-          tizen cli-config "profiles.path=$GITHUB_WORKSPACE/tizen-studio-data/profile/profiles.xml"
+
+      # "tizen security-profiles add" tem um bug antigo e documentado
+      # (developer.tizen.org/forums, várias versões desde 2018): grava a
+      # password como referência a um ficheiro .pwd que nunca chega a ser
+      # criado, e o "package" falha sempre com "Invalid password" ao tentar
+      # lê-la de volta — foi exactamente o erro visto no log. A correção
+      # confirmada (usada em projectos reais de apps de TV) é escrever o
+      # profiles.xml à mão, com a password em texto simples inline, usando
+      # o certificado distribuidor por omissão que já vem com o Tizen
+      # Studio — a sua password é fixa e pública, documentada em vários
+      # projectos: "tizenpkcs12passfordsigner".
+      - name: Escrever profiles.xml directamente (evita o bug do security-profiles add)
+        run: |
+          TSDATA="$GITHUB_WORKSPACE/tizen-studio-data"
+          TSDIR="$GITHUB_WORKSPACE/tizen-studio"
+          mkdir -p "$TSDATA/profile"
+          cat > "$TSDATA/profile/profiles.xml" << XMLEOF
+          <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+          <profiles active="pixgo-tv" version="3.1">
+          <profile name="pixgo-tv">
+          <profileitem ca="$TSDIR/tools/certificate-generator/certificates/developer/tizen-developer-ca.cer" distributor="0" key="$TSDATA/keystore/author/pixgo-author.p12" password="pixgotv2026" rootca=""/>
+          <profileitem ca="$TSDIR/tools/certificate-generator/certificates/distributor/tizen-distributor-ca.cer" distributor="1" key="$TSDIR/tools/certificate-generator/certificates/distributor/tizen-distributor-signer.p12" password="tizenpkcs12passfordsigner" rootca=""/>
+          <profileitem ca="" distributor="2" key="" password="" rootca=""/>
+          </profile>
+          </profiles>
+          XMLEOF
+          tizen cli-config "profiles.path=$TSDATA/profile/profiles.xml"
+          cat "$TSDATA/profile/profiles.xml"
 
       - name: Build + Package (.wgt)
         working-directory: tv/tizen
