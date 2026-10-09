@@ -10,23 +10,77 @@
 //   3. Actualiza o localStorage com o novo token (rotation)
 
 import { authedFetch } from '@/store/auth';
+import i18n            from '@/i18n';
+
+// ── Idioma do conteúdo do catálogo ────────────────────────────────────────
+// O backend só serve conteúdo em pt/en (SUPPORTED_LANGUAGES em lib/geoip.js)
+// — a UI tem também 'es' (i18n/index.ts), então 'es' cai em 'en' aqui até o
+// catálogo suportar espanhol. Antes, nenhuma chamada de catálogo mandava
+// `lang`, e o backend decidia por: cookie preferred_language (nunca setado
+// por este frontend) → preferência da conta → GeoIP do pedido. Ou seja, a
+// MESMA URL podia devolver corpos diferentes consoante o país/sessão de
+// quem pedia — o que impede um cache de borda correto (ele cacheia por URL).
+// Ao mandar sempre o idioma que a própria UI já está a mostrar (i18next,
+// que o utilizador escolhe em LanguageModal e fica em localStorage), a
+// mesma URL passa a significar sempre o mesmo conteúdo.
+const CONTENT_LANGS = ['pt', 'en'] as const;
+function contentLang(): string {
+  const code = (i18n.language || 'pt').slice(0, 2);
+  return (CONTENT_LANGS as readonly string[]).includes(code) ? code : 'en';
+}
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://api.pixgo.qzz.io';
 
-// FIX: sonda de rede do AdblockGuard batia em GET /api/ads/status no EdgeOne
-// (tem limite de requests) a cada verificação — movida pra este domínio do
-// Render (só limita banda, não requests). Rota pública, sem auth, sem dados
-// — ver GET /ads-ping em dispatcher.js.
-export const RENDER_PING_BASE = process.env.NEXT_PUBLIC_RENDER_PING_URL || 'https://digital.pixgo.qzz.io';
+// ── Paciência (anti falsos positivos) ───────────────────────────────────────
+// O backend responde 500/503 honestos quando o KV/Turso está "frio" (timeout de 1,5 s no
+// KV) e a segunda tentativa funciona. Antes, qualquer falha virava lista vazia/erro. Agora
+// os GET esperam e repetem (backoff 0,4→5 s) até PATIENCE_MS; só depois a exceção sobe e a
+// página mostra "erro + tentar novamente" (nunca "nenhum conteúdo"). Mutações (POST/PUT/DELETE)
+// NÃO repetem. Cada tentativa tem um limite longo (45 s) para não ficar pendurada para sempre.
+const PATIENCE_MS     = 75_000;
+const ATTEMPT_TIMEOUT = 45_000;
+const BACKOFF_MS      = [400, 800, 1600, 3000, 5000];
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const isTransientStatus = (s: number) => s === 408 || s === 425 || s === 429 || s >= 500;
+
+async function fetchOnce(url: string, init: RequestInit): Promise<Response> {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT);
+  try { return await authedFetch(url, { ...init, signal: ctrl.signal }); }
+  finally { clearTimeout(timer); }
+}
 
 async function req<T = any>(method: string, path: string, data?: any): Promise<T> {
-  const res = await authedFetch(API_BASE + '/api' + path, {
-    method,
-    body: data ? JSON.stringify(data) : undefined,
-  });
+  // Anti-cache (v=2): o backend respondia listas PARCIAIS com 200 e `s-maxage=86400`, e o CDN
+  // guardava essas respostas degradadas por 24 h. Mudar a URL do catálogo ignora o que já ficou
+  // guardado (o backend também já não devolve listas parciais).
+  const bust = method === 'GET' && path.startsWith('/catalog')
+    ? (path.includes('?') ? '&' : '?') + 'v=2' : '';
+  const url  = API_BASE + '/api' + path + bust;
+  const init: RequestInit = { method, body: data ? JSON.stringify(data) : undefined };
+  const deadline = Date.now() + PATIENCE_MS;
+  let attempt = 0;
+  let res: Response | null = null;
+  let netErr: any = null;
+
+  for (;;) {
+    try {
+      res = method === 'GET' ? await fetchOnce(url, init) : await authedFetch(url, init);
+      netErr = null;
+      if (res.ok || method !== 'GET' || !isTransientStatus(res.status)) break;
+    } catch (e) {
+      netErr = e; res = null;
+      if (method !== 'GET') throw e;
+    }
+    const wait = BACKOFF_MS[Math.min(attempt++, BACKOFF_MS.length - 1)];
+    if (Date.now() + wait >= deadline) break;
+    await sleep(wait);
+  }
+
+  if (!res) { const e: any = new Error('Network error'); e.status = 0; e.cause = netErr; throw e; }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }));
+    const err = await res.json().catch(() => ({ message: res!.statusText }));
     const e: any = new Error(err.message || 'Request failed');
     e.status = res.status;
     e.data   = err;
@@ -75,16 +129,17 @@ export const profilesApi = {
 
 // ── Catalog — matches routes/catalog.js ──────────────────────────────────
 export const catalogApi = {
-  list:     (p: Record<string, any> = {}) => get(`/catalog?${new URLSearchParams(p as any)}`),
+  list:     (p: Record<string, any> = {}) => get(`/catalog?${new URLSearchParams({ lang: contentLang(), ...p } as any)}`),
   featured: (limit = 6, profileId?: string | null) =>
-    get(`/catalog/featured?${new URLSearchParams({ limit: String(limit), ...(profileId ? { profile_id: profileId } : {}) })}`),
+    get(`/catalog/featured?${new URLSearchParams({ lang: contentLang(), limit: String(limit), ...(profileId ? { profile_id: profileId } : {}) })}`),
   latest:   (type: string, limit = 12, profileId?: string | null) =>
-    get(`/catalog/latest?${new URLSearchParams({ type, limit: String(limit), ...(profileId ? { profile_id: profileId } : {}) })}`),
+    get(`/catalog/latest?${new URLSearchParams({ lang: contentLang(), type, limit: String(limit), ...(profileId ? { profile_id: profileId } : {}) })}`),
   // Rodada 2 (set/2026): funde featured+popular+latest(movie/series/anime)
   // numa só chamada — usado só pela home (/main), que antes fazia 5
   // pedidos separados para exatamente estes dados.
   home: (opts: { limit?: number; featuredLimit?: number; profileId?: string | null } = {}) =>
     get(`/catalog/home?${new URLSearchParams({
+      lang: contentLang(),
       ...(opts.limit ? { limit: String(opts.limit) } : {}),
       ...(opts.featuredLimit ? { featured_limit: String(opts.featuredLimit) } : {}),
       ...(opts.profileId ? { profile_id: opts.profileId } : {}),
@@ -114,6 +169,10 @@ export const contentApi = {
   },
   getStream: (id: string, p: Record<string, any> = {})    => get(`/content/${id}/stream?${new URLSearchParams(p as any)}`),
   heartbeat: (id: string, position = 0)                   => post(`/content/${id}/heartbeat`, { position }),
+  // +1 view por visualização (sem limites). Devolve o total actual: { views }.
+  // Invalida o cache curto para a próxima abertura já trazer o total actualizado.
+  registerView: (id: string) => post<{ ok: boolean; counted: boolean; views: number }>(`/content/${id}/view`)
+    .then(r => { invalidateContentCache(id); return r; }),
 };
 
 // ── PixGo Creative — matches routes/creator.js ────────────────────────────
@@ -128,23 +187,22 @@ export const creatorApi = {
 
 // ── Search — matches routes/search.js ────────────────────────────────────
 export const searchApi = {
-  search:         (q: string, p: Record<string, any> = {}) => get(`/search?${new URLSearchParams({ q, ...p })}`),
-  suggest:        (q: string)                               => get(`/search/suggest?q=${encodeURIComponent(q)}`),
-  popular:        ()                                        => get('/search/popular'),
-  searchChannels: (q: string)                               => get(`/channels/search?q=${encodeURIComponent(q)}`),
+  search:  (q: string, p: Record<string, any> = {}) => get(`/search?${new URLSearchParams({ q, ...p })}`),
+  suggest: (q: string)                               => get(`/search/suggest?q=${encodeURIComponent(q)}`),
+  popular: ()                                        => get('/search/popular'),
 };
 
 // ── Channels — matches routes/channels.js ────────────────────────────────
-// GET /channels/:id agora também funciona como "início de sessão" para a
-// quota de 2h/dia (grátis) — mesma lógica do content /stream. heartbeat()
+// Lista/categorias/pesquisa dos canais deixaram de vir daqui — são 100%
+// client-side agora (ver lib/channels-source.ts, que busca o playlist.m3u
+// directamente do jsDelivr). O que resta aqui é só o "gate" de anti-abuso:
+// GET /channels/:id não devolve dados do canal nenhum, só valida limite de
+// ecrãs/quota diária ANTES de reproduzir (mesma lógica do content /stream) —
+// o handler nem sabe qual canal é, só confirma { ok: true }. heartbeat()
 // alimenta o MESMO balde de tempo do VOD (pedido do user).
 export const channelsApi = {
-  list:       (p: Record<string, any> = {}) => get(`/channels?${new URLSearchParams(p as any)}`),
-  categories: ()                             => get('/channels/categories'),
-  get:     (id: string)                  => get(`/channels/${id}`),  // FIX: busca url do stream (autenticado)
-  search:  (q: string)                   => get(`/channels/search?q=${encodeURIComponent(q)}`),
-  refresh: ()                            => post('/channels/refresh'),
-  heartbeat: (id: string)                => post(`/channels/${id}/heartbeat`, {}),
+  get:       (id: string) => get(`/channels/${id}`),
+  heartbeat: (id: string) => post(`/channels/${id}/heartbeat`, {}),
 };
 
 // ── Payments — matches routes/payments.js (v3.0, só Hotmart, sem cripto) ──
@@ -232,33 +290,35 @@ export const contactApi = {
     uploadReq('/support', 'POST', { email, message }),
 };
 
+// ── Notificações de direitos autorais (Denunciar, Portal de Proteção) ─────
+// Mesmo Worker, endpoints públicos (quem notifica costuma não ter conta, por
+// isso não envia Authorization). Nunca cacheado: cache 'no-store' em todos os
+// pedidos, para o portal refletir sempre o estado atual das denúncias.
+async function copyrightReq<T = any>(path: string, data: any): Promise<T> {
+  const res = await fetch(UPLOAD_BASE + path, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e: any = new Error(body.error || 'Copyright request failed');
+    e.status = res.status;
+    throw e;
+  }
+  return body;
+}
+
+export const copyrightApi = {
+  submit: (payload: any) => copyrightReq('/dmca/reports', payload),
+  lookup: (items: { id: string; email: string }[]) =>
+    copyrightReq('/dmca/reports/lookup', { items }),
+};
+
 // ── Pixel — chatbot da plataforma, mesmo Worker ───────────────────────────
 export const chatApi = {
   send: (message: string, history: { role: 'user' | 'assistant'; content: string }[] = []) =>
     uploadReq('/chat', 'POST', { message, history }),
 };
 
-// ── Ads — status/anúncios e reporte de adblock (routes/ads.js) ───────────
-// FIX: AdblockGuard, AdPrerollGate, MidRollOverlay e DisplayAdBanner cada
-// um chamava adsApi.status() por conta própria — numa página com player,
-// isso batia 3-4 requests idênticos ao mesmo tempo, e sem cache nenhum,
-// custando quota de requests à toa (EdgeOne free tier). Cache de 30s
-// partilhado entre todas as chamadas — transparente pros consumidores,
-// nenhum precisou mudar.
-type AdsStatus = { show_ads: boolean; plan: string; is_paid: boolean; adblock: boolean; platform: string; formats: string[]; network?: any };
-let adsStatusCache: { at: number; promise: Promise<AdsStatus> } | null = null;
-const ADS_STATUS_CACHE_MS = 30000;
-
-export const adsApi = {
-  status: (): Promise<AdsStatus> => {
-    const now = Date.now();
-    if (adsStatusCache && now - adsStatusCache.at < ADS_STATUS_CACHE_MS) {
-      return adsStatusCache.promise;
-    }
-    const promise = get<AdsStatus>('/ads/status?platform=web');
-    adsStatusCache = { at: now, promise };
-    promise.catch(() => { adsStatusCache = null; }); // não guarda falha em cache
-    return promise;
-  },
-  reportAdblock: (blocked: boolean) => post<{ ok: boolean; adblock: boolean }>('/ads/adblock', { blocked }),
-};

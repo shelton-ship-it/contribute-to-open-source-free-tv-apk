@@ -1,5 +1,6 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StarIcon from '@mui/icons-material/Star';
@@ -28,6 +29,12 @@ interface ContentCardProps {
   rating?: number;
   progress?: number;
   inList?: boolean;
+  href?: string; // OTIMIZAÇÃO (produção): rota de destino do clique, só para prefetch — ver useEffect abaixo
+  // Card horizontal (16:9, ocupa 2 colunas no .content-grid) — usado só pelas
+  // "mini séries" de canal do YouTube (ver lib/channelSeries.ts), cujas thumbs
+  // são 16:9 e ficariam cortadas no poster vertical 2:3 dos restantes types.
+  // Sem esta prop o card é exactamente o de sempre (vertical).
+  wide?: boolean;
   onClick?: () => void;
   onAddToList?: () => void;
   onShare?: () => void;
@@ -41,36 +48,45 @@ function fmtRating(r?: number) {
 
 export default function ContentCard({
   id, title, poster, year, type, rating, progress,
-  inList, onClick, onAddToList, onShare, style,
+  inList, href, wide, onClick, onAddToList, onShare, style,
 }: ContentCardProps) {
   const [imgErr,   setImgErr]   = useState(false);
-  const [hovered,  setHovered]  = useState(false);
   const { t } = useTranslation();
+  const router = useRouter();
   const typeColor = type ? (TYPE_COLORS[type] ?? '#e50914') : '#e50914';
   const ratingStr = fmtRating(rating);
+
+  // OTIMIZAÇÃO (produção): sem isto, cada clique num card (que só faz
+  // router.push, nunca teve nenhum await) obrigava o Next a ir buscar a
+  // rota de destino ao servidor SÓ no momento do clique — sem cache
+  // nenhuma. router.prefetch faz o Next ir buscar e guardar essa rota em
+  // segundo plano assim que o card aparece no ecrã, para o clique real
+  // ser instantâneo (mesmo mecanismo que o <Link> usa por baixo).
+  useEffect(() => {
+    if (href) router.prefetch(href);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [href]);
 
   return (
     <Focusable
       as="article"
-      className="content-card"
+      className={wide ? 'content-card content-card--wide' : 'content-card'}
       onEnterPress={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
       onKeyDown={(e: React.KeyboardEvent) => {
         // Atalhos para as acções secundárias enquanto o card está focado —
         // ver nota acima sobre porque não são alvos de seta independentes.
         if ((e.key === 'a' || e.key === 'A') && onAddToList) { e.preventDefault(); e.stopPropagation(); onAddToList(); }
         if ((e.key === 's' || e.key === 'S') && onShare)     { e.preventDefault(); e.stopPropagation(); onShare(); }
       }}
-      style={style}
+      style={wide ? { gridColumn: 'span 2', containIntrinsicSize: '240px 170px', ...style } : style}
     >
       {/* Thumbnail */}
-      <div className="content-thumb" onClick={onClick}>
+      <div className="content-thumb" onClick={onClick} style={wide ? { aspectRatio: '16 / 9' } : undefined}>
         {poster && !imgErr ? (
           <img src={poster} alt={title} loading="lazy" onError={() => setImgErr(true)} />
         ) : (
-          <div className="content-thumb-placeholder">
-            <MovieIcon style={{ fontSize: 36, color: 'var(--color-text-muted)' }} />
+          <div className="content-thumb-placeholder" style={wide ? { aspectRatio: '16 / 9' } : undefined}>
+            <MovieIcon style={{ fontSize: wide ? 26 : 32, color: 'var(--color-text-muted)' }} />
             <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4, textAlign: 'center', padding: '0 6px' }}>
               {title}
             </span>
@@ -106,9 +122,11 @@ export default function ContentCard({
           </div>
         )}
 
-        {/* Hover overlay */}
-        <div className={`content-thumb-overlay ${hovered ? 'content-card-hovered' : ''}`}
-          style={{ opacity: hovered ? 1 : 0 }}>
+        {/* Overlay de play — só aparece com rato real (:hover em
+            globals.css, sob @media (hover:hover) and (pointer:fine)) ou em
+            foco de TV (.tv-focused). Sem estado JS: o onMouseEnter emulado
+            pelo toque deixava o overlay preso no telemóvel. */}
+        <div className="content-thumb-overlay">
           <div className="play-btn-circle">
             <PlayArrowIcon style={{ fontSize: 22, color: '#fff', marginLeft: 2 }} />
           </div>

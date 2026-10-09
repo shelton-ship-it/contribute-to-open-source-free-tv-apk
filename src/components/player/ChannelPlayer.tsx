@@ -1,4 +1,5 @@
 'use client';
+import { canHover } from '@/lib/hover';
 import React, { useRef, useEffect, useState } from 'react';
 import StopIcon from '@mui/icons-material/Stop';
 
@@ -188,6 +189,7 @@ export default function ChannelPlayer({ url, channel, onStop }: Props) {
             backdropFilter: 'blur(8px)',
           }}
           onMouseEnter={(e) => {
+            if (!canHover()) return;
             e.currentTarget.style.background = '#ff0000';
             e.currentTarget.style.transform = 'scale(1.05)';
           }}

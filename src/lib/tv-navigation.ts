@@ -503,26 +503,51 @@ export function initTVNavigation(): () => void {
   if (_activeCleanup) { _activeCleanup(); _activeCleanup = null; }
 
   injectFocusStyles();
-  document.documentElement.classList.add('tv-mode');
+  // FIX (pedido explícito, mandatório): os efeitos visuais de foco/hover
+  // pensados para D-pad de TV (.tv-mode) estavam a ser ligados em TODOS os
+  // dispositivos ao montar TVNavigationInit — incluindo telemóvel, onde um
+  // toque num card foca o elemento (tabIndex=0) e o destaque ficava "preso"
+  // até outro toque, por não haver blur natural como haveria com rato.
+  // Agora só liga .tv-mode (a classe que estas regras de CSS exigem —
+  // ver globals.css) em dispositivos identificados como TV/set-top
+  // (isLikelyTV(): user-agent de TV conhecida, ou sem touch + ponteiro
+  // grosseiro/nenhum). O MOTOR de navegação por setas continua activo em
+  // qualquer dispositivo logo a seguir (não depende de .tv-mode) — só o
+  // destaque visual fica exclusivo de TV.
+  if (isLikelyTV()) document.documentElement.classList.add('tv-mode');
 
   // Injectar tabIndex inicial
   injectTabIndex();
 
+  // OTIMIZAÇÃO (produção): isto corria em TODAS as páginas, TODOS os
+  // dispositivos (não só TV), observando `document.body` inteiro com
+  // `attributes:true` — ou seja, disparava em CADA classe/estilo/aria-*
+  // que qualquer componente da app mudasse (hover, toasts, dropdowns,
+  // MUI, animações...), somando jank contínuo ao longo de toda a
+  // navegação. `injectTabIndex()` corria de forma síncrona a cada
+  // batch de mutações, cada chamada fazendo um `querySelectorAll` no
+  // documento inteiro.
+  // Agora: já não observamos `attributes` (só precisamos de saber
+  // quando aparecem NÓS NOVOS, para lhes injectar tabIndex — mudanças
+  // de estilo/aria não interessam a este sistema) e a injeção de
+  // tabIndex passa a ser debounced (só corre depois do DOM assentar),
+  // em vez de a cada mutação individual.
+  let _injectTimer: ReturnType<typeof setTimeout> | null = null;
   const observer = new MutationObserver((mutations) => {
-    // FIX 1: re-injectar tabIndex sempre que o DOM muda (novos cards)
     let hasNewNodes = false;
     for (const m of mutations) {
       if (m.addedNodes.length > 0) { hasNewNodes = true; break; }
     }
-    if (hasNewNodes) injectTabIndex();
+    if (hasNewNodes) {
+      if (_injectTimer) clearTimeout(_injectTimer);
+      _injectTimer = setTimeout(injectTabIndex, 150);
+    }
     scheduleInvalidate();
   });
 
   observer.observe(document.body, {
-    childList:       true,
-    subtree:         true,
-    attributes:      true,
-    attributeFilter: ['disabled', 'tabindex', 'hidden', 'aria-hidden'],
+    childList: true,
+    subtree:   true,
   });
 
   const onResize = () => scheduleInvalidate();
@@ -720,6 +745,7 @@ export function initTVNavigation(): () => void {
     window.removeEventListener('mousedown', onMouseDown, true);
     observer.disconnect();
     if (_invalidateTimer) { clearTimeout(_invalidateTimer); _invalidateTimer = null; }
+    if (_injectTimer)     { clearTimeout(_injectTimer);     _injectTimer     = null; }
     document.documentElement.classList.remove('tv-mode');
     _cacheValid = false;
   };
@@ -766,12 +792,25 @@ export function focusFirstInPage(): void {
 export function isLikelyTV(): boolean {
   if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
 
+  // APK Android TV (Bubblewrap/TWA ou WebView de fallback): o User-Agent do
+  // WebView quase nunca traz marcador de TV e a heurística de ponteiro falha
+  // em boxes com rato/air-mouse. O startUrl do APK traz ?pixgo_tv=1; fica
+  // guardado em localStorage e passa a ser a fonte de verdade (?pixgo_tv=0
+  // limpa — útil para depurar no telemóvel).
+  try {
+    const q = new URLSearchParams(window.location.search).get('pixgo_tv');
+    if (q === '1') localStorage.setItem('pixgo_tv', '1');
+    else if (q === '0') localStorage.removeItem('pixgo_tv');
+    if (localStorage.getItem('pixgo_tv') === '1') return true;
+  } catch { /* localStorage indisponível: segue para a heurística */ }
+
   const ua = navigator.userAgent.toLowerCase();
   const tvUA = [
     'smart-tv','smarttv','tizen','webos','hbbtv','netcast',
     'viera','bravia','aquos','regza','playstation','xbox',
     'roku','firetv','fire tv','androidtv','googletv','appletv',
     'crkey','nettv','maple',
+    'android tv','aftm','aftb','afts','aftt','aftn','aftr','mibox','mitv',
   ];
   if (tvUA.some(s => ua.includes(s))) return true;
 

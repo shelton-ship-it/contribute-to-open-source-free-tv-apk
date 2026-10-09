@@ -5,7 +5,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/store/auth';
 import { searchApi, authApi } from '@/lib/api';
-import { LANGUAGES } from '@/i18n';
+import { loginRedirectUrl } from '@/lib/auth-redirect';
+import { LANGUAGES, changeLanguageLazy } from '@/i18n';
 
 import HomeIcon         from '@mui/icons-material/Home';
 import MovieIcon        from '@mui/icons-material/Movie';
@@ -19,13 +20,12 @@ import TranslateIcon    from '@mui/icons-material/Translate';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import MenuIcon         from '@mui/icons-material/Menu';
 import CloudUploadIcon  from '@mui/icons-material/CloudUpload';
-import EmailIcon        from '@mui/icons-material/Email';
 import DownloadIcon     from '@mui/icons-material/Download';
 import ChildCareIcon    from '@mui/icons-material/ChildCare';
 import CheckIcon        from '@mui/icons-material/Check';
 import GavelIcon        from '@mui/icons-material/Gavel';
+import FlagOutlinedIcon  from '@mui/icons-material/FlagOutlined';
 import Focusable         from '@/components/ui/Focusable';
-import InstallPWAButton  from '@/components/ui/InstallPWAButton';
 import AndroidIcon       from '@mui/icons-material/Android';
 import { focusFirstInPage, shouldAutoFocus } from '@/lib/tv-navigation';
 
@@ -116,6 +116,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => clearInterval(iv);
   }, [canDownload, pathname]);
 
+  // OTIMIZAÇÃO (produção): AppShell envolve TODAS as páginas autenticadas —
+  // um único prefetch aqui, uma vez, cobre os botões "Ver planos"/"Upgrade"
+  // (account, content, watch, downloads, channels), "Downloads", "Upload" e
+  // o link do logo/home espalhados por vários ficheiros, sem precisar de
+  // repetir router.prefetch em cada página individualmente.
+  //
+  // FIX (navegação lenta na sidebar): esta lista cobria só as páginas da
+  // secção "Conta" — faltavam exactamente as rotas que estão no próprio
+  // NAV do sidebar/bottom-nav (Sinal Aberto, Minha Coleção, Pesquisar) e
+  // "Termos" no rodapé. Resultado: clicar em "Catálogo"/"Planos"/etc. era
+  // instantâneo (rota já pré-buscada), mas clicar em "Canais", "Minha
+  // Lista" ou "Buscar" tinha sempre o atraso do primeiro carregamento.
+  // Agora cobre TODAS as rotas alcançáveis a partir do sidebar, não só as
+  // que já tinham sido tratadas à parte.
+  useEffect(() => {
+    [
+      '/main', '/main/catalog', '/main/channels', '/main/mylist', '/main/search',
+      '/main/plans', '/main/downloads', '/main/upload', '/main/account', '/main/legal',
+      '/copyright',
+    ].forEach(r => router.prefetch(r));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     // FIX: foca o primeiro elemento navegável de cada página assim que a
     // rota muda — antes disto nenhuma página fazia isto (mesmo estando
@@ -160,10 +183,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }, 350);
   }, [query]);
 
-  const handleLogout = async () => { await logout(); router.push('/auth/login'); };
+  // OTIMIZAÇÃO (produção): resultados do dropdown de busca (máx. 6) só
+  // navegavam via router.push, nunca pré-buscados.
+  useEffect(() => {
+    results.forEach(r => router.prefetch(`/main/watch/${r.id}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results]);
+
+  // FIX (pedido explícito — TV tem de ver /auth/tv, não o hub externo):
+  // este handler chamava router.push('/auth/login') directo, ignorando
+  // loginRedirectUrl() (que já sabe escolher /auth/tv numa TV — ver
+  // lib/auth-redirect.ts). Sem isto, sair da conta numa TV mandava sempre
+  // para o hub de utilizador e senha, mesmo tendo /auth/tv disponível.
+  const handleLogout = async () => { await logout(); router.push(loginRedirectUrl()); };
 
   const handleLangChange = async (code: string) => {
-    i18n.changeLanguage(code);
+    await changeLanguageLazy(code);
     localStorage.setItem('pixgo_lang', code);
     setLangMenuOpen(false);
     authApi.setLanguage(code).catch(() => {});
@@ -221,6 +256,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   <Icon style={{ fontSize: 17 }} />{t(labelKey as any)}
                 </Link>
               ))}
+
+              {/* Denúncia de direitos autorais, logo após "Pesquisar". Link
+                  (navegação do lado do cliente, rota pré-buscada acima) como
+                  os restantes botões do menu. */}
+              <Link href="/copyright" className="nav-item nav-report" onClick={closeSidebarOnMobile}>
+                <FlagOutlinedIcon style={{ fontSize: 17, color: 'var(--color-primary)' }} />{t('nav.reportCopyright')}
+              </Link>
             </div>
 
             <div className="nav-section">
@@ -267,33 +309,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="sidebar-footer">
             <div style={{ padding:'10px 10px 8px', borderTop:'1px solid rgba(255,255,255,0.05)', marginBottom:4 }}>
               <div style={{ fontSize:'0.6rem', fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', color:'rgba(255,255,255,0.3)', marginBottom:7 }}>{t('contact.copyright')}</div>
-              <a href={`mailto:${t('contact.copyrightEmail')}`} style={{ display:'flex', alignItems:'center', gap:7, padding:'6px 8px', borderRadius:7, background:'rgba(229,9,20,0.06)', border:'1px solid rgba(229,9,20,0.15)', textDecoration:'none', transition:'all 0.15s' }}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background='rgba(229,9,20,0.12)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background='rgba(229,9,20,0.06)'}>
-                <EmailIcon style={{ fontSize:13, color:'#e50914', flexShrink:0 }} />
-                <div>
-                  <div style={{ fontSize:'0.6rem', fontWeight:700, color:'rgba(255,255,255,0.4)', lineHeight:1 }}>{t('contact.copyright')}</div>
-                  <div style={{ fontFamily:'monospace', fontSize:'0.63rem', color:'#e50914', marginTop:2, fontWeight:700 }}>{t('contact.copyrightEmail')}</div>
-                </div>
-              </a>
+              <Link href="/copyright" className="sidebar-report" onClick={closeSidebarOnMobile}>
+                <FlagOutlinedIcon style={{ fontSize: 16, color: 'var(--color-primary)' }} />
+                {t('contact.reportCopyrightButton')}
+              </Link>
             </div>
-            <div style={{ padding: '0 10px 8px' }}>
-              <InstallPWAButton
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                  width: '100%', padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
-                  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'rgba(255,255,255,0.6)', fontSize: '0.72rem', fontWeight: 600,
-                }}
-              />
-            </div>
-            {/* Placeholder — link definitivo do APK a publicar em
-                app.pixgo.qzz.io; troca o href quando o ficheiro estiver
-                disponível lá. */}
+            {/* Botão "Instalar App" (PWA) removido: ficava sempre visível e incomodava.
+                O convite para baixar o app Android é o modal de entrada + esta página. */}
             <div style={{ padding: '0 10px 8px' }}>
               <a
-                href="https://app.pixgo.qzz.io/download/android"
-                target="_blank" rel="noopener noreferrer"
+                href="/baixar"
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
                   width: '100%', padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
@@ -331,7 +356,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     if (e.key === 'Enter' && query.trim()) { router.push(`/main/search?q=${encodeURIComponent(query.trim())}`); setShowDrop(false); setQuery(''); }
                     if (e.key === 'Escape') setShowDrop(false);
                   }} />
-                {searching && <span className="spinner spinner-sm" style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)' }} />}
+                {searching && <span className="input-spinner-slot" style={{ right: 10 }}><span className="spinner spinner-sm" /></span>}
               </div>
               {showDrop && (
                 <div className="search-dropdown fade-in">

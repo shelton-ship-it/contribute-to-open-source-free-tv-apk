@@ -20,13 +20,31 @@ import LockIcon           from '@mui/icons-material/Lock';
 import toast from 'react-hot-toast';
 
 const ShakaPlayer = dynamic(() => import('@/components/player/ShakaPlayer'), { ssr: false });
-import AdPrerollGate from '@/components/player/AdPrerollGate';
-import MidRollOverlay from '@/components/player/MidRollOverlay';
 import type { ShakaPlayerHandle } from '@/components/player/ShakaPlayer';
 import { loginRedirectUrl } from '@/lib/auth-redirect';
 import RateLimitModal, { type UpsellPlan } from '@/components/ui/RateLimitModal';
+import SessionReplacedModal from '@/components/ui/SessionReplacedModal';
+import { useAppBack } from '@/lib/nav-history';
 
 const PROGRESS_INTERVAL_MS = 60_000;
+// Uma view conta depois de ~30s realmente reproduzidos (ou metade do vídeo se durar < 1 min).
+const VIEW_MIN_WATCH_SEC = 30;
+
+// Avatar redondo do uploader; sem imagem (ou se falhar) mostra a inicial: fundo branco, letra preta.
+function UploaderAvatar({ username, src, size = 28 }: { username: string; src?: string | null; size?: number }) {
+  const [err, setErr] = useState(false);
+  if (src && !err) {
+    return <img src={src} alt="" width={size} height={size} onError={() => setErr(true)}
+                style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />;
+  }
+  return (
+    <span aria-hidden style={{ width: size, height: size, borderRadius: '50%', flexShrink: 0, display: 'inline-flex',
+      alignItems: 'center', justifyContent: 'center', fontSize: size * 0.45, fontWeight: 700, color: '#000',
+      background: '#fff' }}>
+      {(username[0] || '?').toUpperCase()}
+    </span>
+  );
+}
 
 function RecommendCard({ item, onClick }: { item: any; onClick: () => void }) {
   const { t }  = useTranslation();
@@ -71,7 +89,8 @@ export default function WatchPage() {
   const id        = params.id as string;
   const sp        = useSearchParams();
   const router    = useRouter();
-  const { t }     = useTranslation();
+  const handleBack = useAppBack('/main/catalog');
+  const { t, i18n } = useTranslation();
   const user      = useAuthStore(s => s.user);
   const plan      = useAuthStore(s => s.plan);
   const profileId = useAuthStore(s => s.activeProfileId);
@@ -85,6 +104,8 @@ export default function WatchPage() {
   const [startTime,         setStartTime]         = useState(0);
   const [showRateLimit,     setShowRateLimit]     = useState(false);
   const [rateLimitPlans,    setRateLimitPlans]    = useState<UpsellPlan[]>([]);
+  const [rateLimitMsg,      setRateLimitMsg]      = useState<string | undefined>(undefined);
+  const [sessionReplacedMsg, setSessionReplacedMsg] = useState('');
   const [recommendations,   setRecommendations]   = useState<any[]>([]);
   const [downloading,       setDownloading]       = useState(false);
   const [downloadPct,       setDownloadPct]       = useState(0);
@@ -93,6 +114,12 @@ export default function WatchPage() {
 
   const lastProgressSave = useRef<number>(0);
   const lastProgressPct  = useRef<number>(-1);
+
+  // Views: total devolvido pelo servidor depois de contar (substitui content.views no ecrã).
+  const [liveViews, setLiveViews] = useState<number | null>(null);
+  const viewSent    = useRef<boolean>(false);
+  const watchedSec  = useRef<number>(0);
+  const lastCurSec  = useRef<number>(-1);
 
   const canDownload  = !!(plan && plan.id !== 'free' && plan.is_active);
   const streamApiUrl = id
@@ -113,6 +140,10 @@ export default function WatchPage() {
       setLoading(true);
       lastProgressSave.current = 0;
       lastProgressPct.current  = -1;
+      viewSent.current   = false;
+      watchedSec.current = 0;
+      lastCurSec.current = -1;
+      setLiveViews(null);
       try {
         const epId = sp.get('episode');
         const wantsOffline = sp.get('offline') === '1';
@@ -168,8 +199,8 @@ export default function WatchPage() {
           .then((r: any) => {
             if (!cancelled) setRecommendations((r.items || []).slice(0, 12));
           }).catch(() => {});
-      } catch {
-        if (!cancelled) toast.error(t('errors.notFound'));
+      } catch (e: any) {
+        if (!cancelled) toast.error(e?.status === 404 ? t('errors.notFound') : t('errors.networkError'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -178,7 +209,29 @@ export default function WatchPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // OTIMIZAÇÃO (produção): os cards de recomendados só faziam router.push,
+  // nunca pré-buscados — prefetch de todos assim que a lista chega (12
+  // itens no máximo, custo desprezível).
+  useEffect(() => {
+    recommendations.forEach(item => router.prefetch(`/main/watch/${item.id}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recommendations]);
+
   const handleTime = useCallback((cur: number, dur: number) => {
+    // Conta tempo REALMENTE reproduzido (saltos/seek e pausas não somam) e regista
+    // 1 view quando passa o mínimo. Offline não conta (sem rede, e já foi contado ao baixar/ver).
+    if (user && id && !viewSent.current && !offlinePlayback) {
+      const delta = cur - lastCurSec.current;
+      if (lastCurSec.current >= 0 && delta > 0 && delta < 2.5) watchedSec.current += delta;
+      lastCurSec.current = cur;
+      const needed = dur > 0 && dur < 60 ? dur * 0.5 : VIEW_MIN_WATCH_SEC;
+      if (watchedSec.current >= needed) {
+        viewSent.current = true;
+        contentApi.registerView(id)
+          .then(r => { if (r && typeof r.views === 'number') setLiveViews(r.views); })
+          .catch(() => { viewSent.current = false; watchedSec.current = needed - 5; }); // tenta de novo daqui a ~5s de reprodução
+      }
+    }
     if (!user || !id || !dur || !profileId) return;
     if (typeof id !== 'string' || id.trim() === '' || id === 'undefined') return;
     const now = Date.now();
@@ -188,19 +241,9 @@ export default function WatchPage() {
     lastProgressSave.current = now;
     lastProgressPct.current  = pct;
     progressApi.update({ profileId, contentId: id, episodeId: activeEp?.id, lang: 'en', progress: pct, duration: Math.round(dur) }).catch(() => {});
-  }, [id, activeEp, user, profileId]);
+  }, [id, activeEp, user, profileId, offlinePlayback]);
 
-  // Estado de tempo NÃO limitado (handleTime acima é throttled só pra
-  // gravar progresso) — o MidRollOverlay precisa de updates frequentes
-  // pra saber quando cruzar o ponto de corte do mid-roll.
   const playerRef = useRef<ShakaPlayerHandle>(null);
-  const [playbackTime, setPlaybackTime] = useState(0);
-  const [playbackDuration, setPlaybackDuration] = useState(0);
-  const handlePlaybackTime = useCallback((cur: number, dur: number) => {
-    setPlaybackTime(cur);
-    setPlaybackDuration(dur);
-    handleTime(cur, dur);
-  }, [handleTime]);
 
   useEffect(() => {
     lastProgressSave.current = 0;
@@ -219,14 +262,22 @@ export default function WatchPage() {
     }
   }, [content, activeEp]);
 
-  const toggleList = async () => {
+  // OTIMIZAÇÃO (produção): atualiza o botão/UI já, no mesmo clique;
+  // reverte silenciosamente só se o pedido ao servidor falhar mesmo.
+  const toggleList = () => {
     if (!user) { router.push(loginRedirectUrl()); return; }
     const pid = profileId;
     if (!pid) { toast.error('Perfil não encontrado.'); return; }
-    try {
-      if (inList) { await myListApi.remove(pid, id); setInList(false); toast(t('myList.removed'), { icon: '🗑' }); }
-      else        { await myListApi.add(pid, id);    setInList(true);  toast.success(t('myList.added')); }
-    } catch {}
+
+    if (inList) {
+      setInList(false);
+      toast(t('myList.removed'), { icon: '🗑' });
+      myListApi.remove(pid, id).catch(() => { setInList(true); toast.error(t('errors.networkError')); });
+    } else {
+      setInList(true);
+      toast.success(t('myList.added'));
+      myListApi.add(pid, id).catch(() => { setInList(false); toast.error(t('errors.networkError')); });
+    }
   };
 
   const dlStart      = useDownloadsStore(s => s.start);
@@ -280,10 +331,17 @@ export default function WatchPage() {
   };
 
   if (loading) return <div className="page-loading"><div className="loading-ring" /></div>;
+  if (sessionReplacedMsg) return (
+    <SessionReplacedModal
+      message={sessionReplacedMsg}
+      onClose={() => { setSessionReplacedMsg(''); router.push('/main'); }}
+    />
+  );
   if (showRateLimit) return (
     <RateLimitModal
       plans={rateLimitPlans}
-      onClose={() => { setShowRateLimit(false); router.back(); }}
+      message={rateLimitMsg}
+      onClose={() => { setShowRateLimit(false); handleBack(); }}
       onUpgrade={(planId) => { setShowRateLimit(false); router.push(`/main/plans?highlight=${planId}`); }}
     />
   );
@@ -319,19 +377,21 @@ export default function WatchPage() {
           border-left: 3px solid transparent;
           outline: none;
         }
-        .episode-row:hover,
-        .episode-row:focus       { background: var(--color-card-hover); }
+        /* FIX (foco só em TV, todas as páginas): :focus/:focus-visible ficam
+           sob .tv-mode; :hover (rato) mantém-se. */
+        @media (hover: hover) and (pointer: fine) { .episode-row:hover { background: var(--color-card-hover); } }
+        .tv-mode .episode-row:focus { background: var(--color-card-hover); }
         .episode-row.ep-playing  { background: rgba(229,9,20,0.07); border-left-color: var(--color-primary); }
-        .episode-row:focus-visible {
+        .tv-mode .episode-row:focus-visible {
           outline: 2px solid var(--color-primary) !important;
           outline-offset: -2px !important;
           box-shadow: none !important;
         }
 
         /* Recomendados */
-        .recommend-card:hover,
-        .recommend-card:focus { background: rgba(255,255,255,0.04); }
-        .recommend-card:focus-visible {
+        @media (hover: hover) and (pointer: fine) { .recommend-card:hover { background: rgba(255,255,255,0.04); } }
+        .tv-mode .recommend-card:focus { background: rgba(255,255,255,0.04); }
+        .tv-mode .recommend-card:focus-visible {
           outline: 2px solid var(--color-primary) !important;
           outline-offset: 2px !important;
           border-radius: 6px;
@@ -368,7 +428,7 @@ export default function WatchPage() {
       <div className="watch-outer">
         {/* ── Coluna principal ────────────────────────────────────────── */}
         <div>
-          <button className="btn btn-ghost btn-sm" style={{ marginBottom: 12 }} onClick={() => router.back()}>
+          <button className="btn btn-ghost btn-sm" style={{ marginBottom: 12 }} onClick={handleBack}>
             <ArrowBackIcon style={{ fontSize: 15 }} /> {t('common.back')}
           </button>
 
@@ -382,7 +442,7 @@ export default function WatchPage() {
                 offlinePlayback={offlinePlayback}
                 poster={content?.meta?.poster || content?.poster}
                 startTime={startTime}
-                onTimeUpdate={handlePlaybackTime}
+                onTimeUpdate={handleTime}
                 onNextEpisode={isEpisodic && activeEp ? handleNext : undefined}
                 autoPlay
               />
@@ -398,26 +458,22 @@ export default function WatchPage() {
                 </span>
               </div>
             ) : streamApiUrl && token ? (
-              <AdPrerollGate>
-                <ShakaPlayer
-                  ref={playerRef}
-                  streamApiUrl={streamApiUrl}
-                  token={token}
-                  poster={content?.meta?.poster || content?.poster}
-                  startTime={startTime}
-                  onTimeUpdate={handlePlaybackTime}
-                  onNextEpisode={isEpisodic && activeEp ? handleNext : undefined}
-                  onFreeTimeExhausted={(plans: UpsellPlan[]) => { setRateLimitPlans(plans ?? []); setShowRateLimit(true); }}
-                  autoPlay
-                />
-              </AdPrerollGate>
+              <ShakaPlayer
+                ref={playerRef}
+                streamApiUrl={streamApiUrl}
+                token={token}
+                poster={content?.meta?.poster || content?.poster}
+                startTime={startTime}
+                onTimeUpdate={handleTime}
+                onNextEpisode={isEpisodic && activeEp ? handleNext : undefined}
+                onFreeTimeExhausted={(plans: UpsellPlan[], message?: string) => { setRateLimitPlans(plans ?? []); setRateLimitMsg(message); setShowRateLimit(true); }}
+                onSessionReplaced={(message: string) => setSessionReplacedMsg(message)}
+                autoPlay
+              />
             ) : (
               <div style={{ width: '100%', aspectRatio: '16/9', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div className="loading-ring" />
               </div>
-            )}
-            {!offlinePlayback && streamApiUrl && token && (
-              <MidRollOverlay currentTime={playbackTime} duration={playbackDuration} playerRef={playerRef} />
             )}
           </div>
 
@@ -426,7 +482,7 @@ export default function WatchPage() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 800, letterSpacing: '-0.02em', marginBottom: 6 }}>
                 {content?.meta?.title || content?.title}
-                {activeEp && ` — E${activeEp.episode_number}: ${activeEp.title}`}
+                {activeEp && ` · E${activeEp.number ?? ''}: ${activeEp.title}`}
               </h1>
               <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
                 {content?.type && <span className="badge badge-red" style={{ textTransform: 'capitalize' }}>{content.type}</span>}
@@ -436,7 +492,19 @@ export default function WatchPage() {
                     <StarIcon style={{ fontSize: 11 }} />{content.meta.rating.toFixed(1)}
                   </span>
                 )}
+                {typeof (liveViews ?? content?.views) === 'number' && !content?.offlineOnly && (
+                  <span className="badge badge-gray" title={(liveViews ?? content.views).toLocaleString(i18n.language)}>
+                    {new Intl.NumberFormat(i18n.language, { notation: 'compact', maximumFractionDigits: 1 }).format(liveViews ?? content.views)}{' '}
+                    {t('content.views', { defaultValue: 'views' })}
+                  </span>
+                )}
               </div>
+              {content?.uploader?.username && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                  <UploaderAvatar username={content.uploader.username} src={content.uploader.avatar} />
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-title)' }}>@{content.uploader.username}</span>
+                </div>
+              )}
             </div>
 
             <div className="watch-action-btns">
@@ -495,7 +563,7 @@ export default function WatchPage() {
                       style={{ flexShrink: 0, fontSize: '0.74rem', padding: '4px 10px' }}
                       onClick={() => setActiveSeason(si)}
                     >
-                      {t('content.season')} {s.season_number}
+                      {t('content.season')} {s.number}
                     </button>
                   ))}
                 </div>
@@ -524,7 +592,7 @@ export default function WatchPage() {
                           </div>}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: '0.78rem', fontWeight: 600, color: playing ? 'var(--color-primary)' : 'var(--color-text-title)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          E{ep.episode_number} · {ep.title}
+                          E{ep.number ?? ''} · {ep.title}
                         </div>
                         {ep.duration && <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 1 }}>{Math.floor(ep.duration / 60)}min</div>}
                       </div>

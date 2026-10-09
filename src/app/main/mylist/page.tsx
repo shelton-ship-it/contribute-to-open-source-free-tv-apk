@@ -1,15 +1,15 @@
 'use client';
+import { ContentGridSkeleton } from '@/components/ui/Skeleton';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
 import { myListApi } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
+import { isLikelyTV } from '@/lib/tv-navigation';
 import ContentCard from '@/components/ui/ContentCard';
 import BookmarkIcon from '@mui/icons-material/Bookmark';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import toast from 'react-hot-toast';
-import AdsterraNative from '@/components/AdsterraNative';
-import DisplayAdBanner from '@/components/DisplayAdBanner';
 
 export default function MyListPage() {
   const router    = useRouter();
@@ -18,15 +18,17 @@ export default function MyListPage() {
 
   const [items,     setItems]     = useState<any[]>([]);
   const [loading,   setLoading]   = useState(true);
+  const [failed,    setFailed]    = useState(false);
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!profileId) { setLoading(false); return; }
+    setFailed(false);
     try {
       const res = await myListApi.list({ profileId, limit: 100 });
       setItems(res.items ?? []);
     } catch {
-      toast.error(t('errors.networkError'));
+      setFailed(true);
     } finally {
       setLoading(false);
     }
@@ -34,30 +36,45 @@ export default function MyListPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const remove = async (contentId: string, e?: React.MouseEvent | React.KeyboardEvent) => {
+  // OTIMIZAÇÃO (produção): antes esperava a resposta do servidor para só
+  // depois tirar o item da grelha — o clique ficava "sem reação" durante
+  // o round-trip. Agora remove da UI já, e só reverte + avisa se o
+  // pedido ao servidor falhar mesmo.
+  const remove = (contentId: string, e?: React.MouseEvent | React.KeyboardEvent) => {
     e?.stopPropagation();
     if (!profileId) return;
-    try {
-      await myListApi.remove(profileId, contentId);
-      setItems(p => p.filter(i => (i.content_id || i.contentId) !== contentId));
-      toast(t('myList.removed'), { icon: '🗑' });
-    } catch {}
+
+    const removedEntry = items.find(i => (i.content_id || i.contentId) === contentId);
+    setItems(p => p.filter(i => (i.content_id || i.contentId) !== contentId));
+    toast(t('myList.removed'), { icon: '🗑' });
+
+    myListApi.remove(profileId, contentId).catch(() => {
+      if (removedEntry) setItems(p => [removedEntry, ...p]);
+      toast.error(t('errors.networkError'));
+    });
   };
 
   return (
     <div>
+      {/* FIX (redundância entre navegação e página, pedido explícito): o
+          nome desta secção ("Minha Coleção") já aparece no sidebar/bottom-nav
+          — <h1> removido, fica só o ícone + contagem. */}
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <BookmarkIcon style={{ color: 'var(--color-primary)', fontSize: 24 }} />
-          <div>
-            <h1 className="page-title" style={{ margin: 0 }}>{t('myList.title')}</h1>
-            <p className="page-subtitle">{items.length} {t('myList.saved')}</p>
-          </div>
+          <p className="page-subtitle" style={{ margin: 0 }}>{items.length} {t('myList.saved')}</p>
         </div>
       </div>
 
       {loading ? (
-        <div className="page-loading"><div className="loading-ring" /></div>
+        <ContentGridSkeleton count={12} />
+      ) : failed && items.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon"><BookmarkIcon style={{ fontSize: 28 }} /></div>
+          <div className="empty-title">{t('errors.networkError')}</div>
+          <div className="empty-desc">{t('errors.generic')}</div>
+          <button className="btn btn-primary" onClick={() => { setLoading(true); load(); }}>{t('common.retry')}</button>
+        </div>
       ) : items.length === 0 ? (
         <div className="empty-state">
           <div className="empty-icon"><BookmarkIcon style={{ fontSize: 28 }} /></div>
@@ -83,7 +100,7 @@ export default function MyListPage() {
                 data-tv-focusable
                 className="mylist-card-wrap"
                 style={{ position: 'relative', borderRadius: 12, outline: 'none' }}
-                onFocus={() => setFocusedId(cid)}
+                onFocus={() => { if (isLikelyTV()) setFocusedId(cid); }}
                 onBlur={e => {
                   if (!e.currentTarget.contains(e.relatedTarget as Node)) {
                     setFocusedId(null);
@@ -107,6 +124,7 @@ export default function MyListPage() {
                   poster={content.meta?.poster || content.poster}
                   year={content.year}
                   type={content.type}
+                  href={`/main/watch/${content.id}`}
                   onClick={() => router.push(`/main/watch/${content.id}`)}
                 />
 
@@ -137,27 +155,27 @@ export default function MyListPage() {
         </div>
       )}
 
-      {items.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center', marginTop: 24 }}>
-          <AdsterraNative />
-          <DisplayAdBanner />
-        </div>
-      )}
-
       <style>{`
-        .mylist-card-wrap:hover .mylist-remove-btn {
-          opacity: 1 !important;
-          pointer-events: auto !important;
+        @media (hover: hover) and (pointer: fine) {
+          .mylist-card-wrap:hover .mylist-remove-btn {
+            opacity: 1 !important;
+            pointer-events: auto !important;
+          }
         }
-        .mylist-card-wrap:focus > .content-card,
-        .mylist-card-wrap:focus-visible > .content-card {
+        /* Toque: sem hover não há como revelar o botão — fica sempre visível
+           (é uma acção, não um efeito de hover). */
+        @media (hover: none), (pointer: coarse) {
+          .mylist-remove-btn { opacity: 1 !important; pointer-events: auto !important; }
+        }
+        .tv-mode .mylist-card-wrap:focus > .content-card,
+        .tv-mode .mylist-card-wrap:focus-visible > .content-card {
           border-color: rgba(229,9,20,0.6) !important;
           transform: translateY(-3px) scale(1.015) !important;
           box-shadow: 0 8px 24px rgba(229,9,20,0.3), 0 0 0 3px rgba(229,9,20,0.5) !important;
         }
         .mylist-card-wrap:focus { outline: none !important; }
         .mylist-card-wrap:focus-visible { outline: none !important; }
-        .mylist-card-wrap:focus .mylist-remove-btn {
+        .tv-mode .mylist-card-wrap:focus .mylist-remove-btn {
           opacity: 1 !important;
           pointer-events: auto !important;
         }

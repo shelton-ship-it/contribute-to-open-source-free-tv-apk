@@ -1,216 +1,232 @@
 // src/app/main/page.tsx
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
 import { catalogApi, progressApi } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
 import ContentCard from '@/components/ui/ContentCard';
+import TrendingCarousel from '@/components/ui/TrendingCarousel';
+import { isChannelSeries } from '@/lib/channelSeries';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import TvOffIcon from '@mui/icons-material/TvOff';
 import toast from 'react-hot-toast';
-import DisplayAdBanner from '@/components/DisplayAdBanner';
 import Focusable from '@/components/ui/Focusable';
+import { ContentGridSkeleton } from '@/components/ui/Skeleton';
 
-// Quantidade de itens pedidos por linha — antes era 12 buscados (com só 8
-// mostrados), agora busca-se mais para preencher a linha inteira, igual
-// densidade ao grid do catálogo (ver /main/catalog/page.tsx, limit: 24).
-const ROW_FETCH_LIMIT = 24;
-
-// Embaralha uma cópia do array (Fisher-Yates) — chamado a cada montagem do
-// HomePage (ou seja, a cada entrada do user no /main), pra dar sensação de
-// catálogo sempre a mudar sem depender de nenhuma ordenação nova no backend.
-function shuffle<T>(arr: T[]): T[] {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-// FIX: pedido explícito — tanto no hero (mostrador que roda os destaques)
-// quanto nas linhas de cards do /main, os primeiros itens mostrados devem
-// ser especificamente da categoria "video", seguidos pelo resto. Partição
-// estável: mantém a ordem relativa dentro de cada grupo (vídeos primeiro,
-// depois tudo o resto), sem re-embaralhar nada que já tenha sido decidido
-// antes desta função.
-function videoFirst<T extends { type?: string }>(arr: T[]): T[] {
-  const videos = arr.filter(item => item.type === 'video');
-  const rest   = arr.filter(item => item.type !== 'video');
-  return [...videos, ...rest];
-}
-
-// FIX: linhas do /main ficavam limitadas a 8 cards (slice fixo), enquanto
-// o catálogo mostrava grids cheios de 24. O pedido era o /main ser "a
-// cereja do bolo" — linhas tão cheias quanto o catálogo, não uma amostra
-// pequena. Removido o slice(0,8): mostra tudo o que foi buscado por linha
-// (ver ROW_FETCH_LIMIT abaixo, já pede mais itens por categoria à API).
-function ContentRow({ label, items, onSeeAll, router, t }: any) {
-  if (!items?.length) return null;
-  return (
-    <div className="section">
-      <div className="section-header">
-        <h2 className="section-title">{label}</h2>
-        {onSeeAll && <Focusable as="span" className="section-link" onClick={onSeeAll}>{t('common.seeAll')} →</Focusable>}
-      </div>
-      <div className="content-grid" data-tv-container>
-        {items.map((item: any, i: number) => {
-          const title  = item.meta?.title  || item.title  || '—';
-          const poster = item.meta?.poster || item.poster;
-          const rating = item.meta?.rating || item.rating;
-          return (
-            <ContentCard
-              key={item.id}
-              id={item.id}
-              title={title}
-              poster={poster}
-              year={item.year}
-              type={item.type}
-              rating={rating}
-              onClick={() => router.push(`/main/watch/${item.id}`)}
-              style={{ animationDelay: `${i * 0.04}s` }}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+// FIX (pedido explícito, set/2026): o /main tinha duas coisas a sair —
+//
+//   1. O hero rotativo (mostrador a trocar de destaque a cada 7s, com
+//      pontinhos de navegação). Removido por completo: sem heroIdx, sem
+//      setInterval, sem a secção .hero-banner no JSX.
+//
+//   2. As fileiras separadas por tipo (Vídeos / Popular / Filmes / Séries /
+//      Anime), cada uma buscada e embaralhada à parte. No lugar entra uma
+//      única grelha com todos os tipos misturados — sem rótulo de secção
+//      por tipo, ao estilo da home do YouTube — ordenada por lançamento
+//      mais recente (não popularidade, não embaralhado). Isto usa a MESMA
+//      chamada e a MESMA ordenação que a aba "Todos" do /main/catalog
+//      (GET /api/catalog, sort=recent, sem type — ver routes/catalog.js,
+//      mergeTypesRecent). Antes disto, este ficheiro fazia
+//      shuffle()/videoFirst() em cada fileira; ambos foram removidos, já
+//      não fazem sentido numa lista única ordenada por data.
+//
+// "Continuar assistindo" mantém-se — é progresso pessoal do utilizador,
+// não uma categorização por tipo, e não foi pedido para sair.
+//
+// FIX v2 (pedido explícito, set/2026) — feed estilo YouTube incompleto:
+//
+//   1. Só existia UMA página (24 itens), sem scroll infinito. Agora carrega
+//      mais páginas automaticamente à medida que o utilizador se aproxima
+//      do fundo (IntersectionObserver numa sentinela, sem custo de scroll
+//      listener). Usa a MESMA rota/paginação de sempre (GET /api/catalog,
+//      sort=recent, sem type) — só acrescenta páginas, nunca as troca.
+//
+//   2. "Ordenar pelo mais recente" está correcto, mas pedido explícito:
+//      mesmo os itens recentes devem aparecer MISTURADOS entre si (não só
+//      misturados entre tipos), como a home do YouTube faz — não uma fila
+//      estritamente cronológica. Isto é feito no backend (?feed=1, ver
+//      routes/catalog.js → shuffleWindows) SOBRE cada página já decidida
+//      por offset/limit — nunca muda que itens caem em cada página, só a
+//      ordem local dentro dela, por isso não interfere com o scroll
+//      infinito nem duplica/salta itens entre páginas. O /main/catalog não
+//      manda ?feed=1 e continua estritamente cronológico.
+//
+//   3. Memória em dispositivos fracos com scroll infinito e MUITO conteúdo:
+//      duas camadas, como o YouTube faz na prática —
+//        a) content-visibility:auto em .content-card (globals.css) — o
+//           browser deixa de fazer layout/paint de cartões fora do ecrã,
+//           sem precisar de desmontar/remontar nada (o que quebraria o
+//           foco por D-pad da navegação TV);
+//        b) um tecto (MAX_MOUNTED) ao nº de cartões mantidos no DOM/estado
+//           React — ao ultrapassar o tecto, os mais antigos (topo, já bem
+//           fora de vista numa lista só-para-baixo) são libertados. Só
+//           afecta o array em memória, nunca o que já foi pedido ao
+//           servidor nem a paginação em si.
+//
+// MINI SÉRIES (pedido explícito, set/2026) — vídeos de canal do YouTube
+// registados como type `series` sem temporada/episódio, marcados no campo
+// `genres` (ver lib/channelSeries.ts). Têm cards horizontais 16:9 e NÃO se
+// misturam com o resto do feed: saem da grelha misturada (o filtro é só de
+// apresentação — paginação, seenIds e o tecto de memória continuam a contar
+// os itens crus devolvidos pelo servidor, por isso nada salta nem duplica) e
+// aparecem numa secção própria fixa no topo, "Tendências", em carrossel
+// (TrendingCarousel). Séries com temporadas/episódios NÃO têm o marcador e
+// continuam na grelha, com cards verticais, como sempre.
+const ITEMS_LIMIT  = 24;
+const TRENDING_LIMIT = 60; // mini séries mais recentes no carrossel
+const MAX_MOUNTED   = 240; // ~10 páginas — tecto de segurança para memória fraca
+const TRIM_TO       = 180; // ao ultrapassar o tecto, corta de volta para isto
 
 export default function HomePage() {
   const router = useRouter();
   const { t }  = useTranslation();
 
-  const [featured,  setFeatured]  = useState<any[]>([]);
-  const [heroIdx,   setHeroIdx]   = useState(0);
-  const [movies,    setMovies]    = useState<any[]>([]);
-  const [series,    setSeries]    = useState<any[]>([]);
-  const [anime,     setAnime]     = useState<any[]>([]);
-  const [videos,    setVideos]    = useState<any[]>([]);
-  const [popular,   setPopular]   = useState<any[]>([]);
-  const [continueW, setContinueW] = useState<any[]>([]);
-  const [loading,   setLoading]   = useState(true);
+  const [items,      setItems]      = useState<any[]>([]);
+  const [continueW,  setContinueW]  = useState<any[]>([]);
+  const [trending,   setTrending]   = useState<any[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [loadingMore,setLoadingMore]= useState(false);
+  const [page,       setPage]       = useState(1);
+  const [hasMore,    setHasMore]    = useState(true);
 
   const activeProfileId = useAuthStore(s => s.activeProfileId);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const seenIds     = useRef<Set<string>>(new Set());
+  const loadingMoreRef = useRef(false); // evita disparos duplicados do observer
 
+  const loadPage = useCallback(async (p: number) => {
+    const res = await catalogApi.list({
+      limit: ITEMS_LIMIT,
+      page:  p,
+      sort:  'recent',
+      feed:  1, // mistura "estilo YouTube" — só a home usa isto (ver routes/catalog.js)
+      ...(activeProfileId ? { profile_id: activeProfileId } : {}),
+    });
+    return Array.isArray(res.items) ? res.items : [];
+  }, [activeProfileId]);
+
+  // Carga inicial — reinicia tudo sempre que o perfil activo muda.
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    setPage(1);
+    setHasMore(true);
+    seenIds.current = new Set();
+    // Coalesce reinícios do arranque (o perfil resolve em ms): só a ÚLTIMA carga chega à rede e o
+    // skeleton fica contínuo (antes: skeleton → some → 2.º skeleton).
+    const timer = setTimeout(() => {
+    // Carrossel "Tendências": mesma rota do catálogo (type=series, mais
+    // recentes primeiro), filtrada no cliente pelo marcador de mini série.
+    // Falha silenciosa — sem carrossel o /main funciona exactamente como antes.
+    catalogApi.list({
+      limit: TRENDING_LIMIT,
+      page:  1,
+      sort:  'recent',
+      type:  'series',
+      ...(activeProfileId ? { profile_id: activeProfileId } : {}),
+    })
+      .then((res: any) => {
+        if (cancelled) return;
+        const list = Array.isArray(res?.items) ? res.items : [];
+        setTrending(list.filter(isChannelSeries));
+      })
+      .catch(() => { if (!cancelled) setTrending([]); });
     (async () => {
       try {
-        // Rodada 2 (set/2026): antes eram 5 pedidos separados
-        // (featured+latest×3+popular) sempre disparados juntos aqui — agora
-        // é 1 só (GET /api/catalog/home), que já devolve tudo consolidado.
-        const home = await catalogApi.home({
-          limit: ROW_FETCH_LIMIT,
-          featuredLimit: 6,
-          profileId: activeProfileId,
-        });
+        const first = await loadPage(1);
         if (cancelled) return;
-        const arr = (v: any) => Array.isArray(v) ? v : [];
-        // Embaralhado a cada entrada nesta página — cada linha fica numa
-        // ordem diferente sempre que o user volta ao /main. FIX: o hero
-        // (mostrador) deve mostrar primeiro os itens da categoria "video",
-        // depois o restante — ver videoFirst() acima.
-        setFeatured(videoFirst(arr(home.featured)));
-        setMovies(shuffle(arr(home.latest?.movie)));
-        setSeries(shuffle(arr(home.latest?.series)));
-        setAnime(shuffle(arr(home.latest?.anime)));
-        setVideos(shuffle(arr(home.latest?.video)));
-        setPopular(shuffle(arr(home.popular)));
+        seenIds.current = new Set(first.map((it: any) => it.id));
+        setItems(first);
+        setHasMore(first.length === ITEMS_LIMIT);
         progressApi.continue({ limit: 6 })
           .then((r: any) => { if (!cancelled) setContinueW(Array.isArray(r) ? r : []); })
           .catch(() => {});
       } catch {
-        toast.error(t('errors.networkError'));
+        // Falha só depois de MUITA paciência (lib/api.ts): erro de ligação, nunca "sem conteúdo".
+        if (!cancelled) setFailed(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    }, 150);
+    return () => { cancelled = true; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProfileId]);
 
-  // Hero rotation
+  // Scroll infinito: observa uma sentinela no fundo da grelha e carrega a
+  // página seguinte quando ela entra no viewport. rootMargin adianta o
+  // carregamento um pouco antes de chegar mesmo ao fim, para não haver
+  // "salto" visível à espera da rede.
   useEffect(() => {
-    if (featured.length < 2) return;
-    const id = setInterval(() => setHeroIdx(i => (i + 1) % featured.length), 7000);
-    return () => clearInterval(id);
-  }, [featured.length]);
+    const el = sentinelRef.current;
+    if (!el || loading) return;
+
+    const io = new IntersectionObserver((entries) => {
+      if (!entries[0].isIntersecting) return;
+      if (loadingMoreRef.current || !hasMore) return;
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+
+      const nextPage = page + 1;
+      loadPage(nextPage)
+        .then((next) => {
+          const fresh = next.filter((it: any) => !seenIds.current.has(it.id));
+          fresh.forEach((it: any) => seenIds.current.add(it.id));
+          setItems(prev => {
+            const merged = [...prev, ...fresh];
+            // Tecto de memória (ver nota acima) — corta do topo, não do
+            // fundo, para não interferir com o que está prestes a ser visto.
+            return merged.length > MAX_MOUNTED ? merged.slice(merged.length - TRIM_TO) : merged;
+          });
+          setPage(nextPage);
+          setHasMore(next.length === ITEMS_LIMIT);
+        })
+        .catch(() => { /* falha silenciosa — tenta de novo no próximo intersect */ })
+        .finally(() => { loadingMoreRef.current = false; setLoadingMore(false); });
+    }, { rootMargin: '600px 0px' });
+
+    io.observe(el);
+    return () => io.disconnect();
+  }, [loading, hasMore, page, loadPage]);
+
+  useEffect(() => {
+    continueW.forEach((item: any) => router.prefetch(`/main/watch/${item.content_id}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [continueW]);
 
   if (loading) return (
-    <div className="page-loading">
-      <div className="loading-ring" />
-      <span style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
-        {t('common.loading')}
-      </span>
+    <div>
+      <ContentGridSkeleton count={12} withHeader />
+      <ContentGridSkeleton count={12} withHeader />
     </div>
   );
 
-  const hasAny = featured.length || movies.length || series.length || anime.length || videos.length || popular.length;
+  // Mini séries saem da grelha misturada (ver nota no topo do ficheiro).
+  const gridItems = items.filter((it: any) => !isChannelSeries(it));
 
   // Empty state
-  if (!hasAny) return (
+  if (!gridItems.length && !trending.length) return (
     <div className="empty-state" style={{ minHeight: '60vh' }}>
       <div className="empty-icon">
         <TvOffIcon style={{ fontSize: 30 }} />
       </div>
-      <div className="empty-title">{t('home.noContent')}</div>
-      <div className="empty-desc">{t('home.noContentDesc')}</div>
+      <div className="empty-title">{failed ? t('errors.networkError') : t('home.noContent')}</div>
+      <div className="empty-desc">{failed ? t('errors.generic') : t('home.noContentDesc')}</div>
       <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => window.location.reload()}>
         {t('common.retry')}
       </button>
     </div>
   );
 
-  const hero = featured[heroIdx];
-
   return (
     <div>
-      {/* ── Hero ── */}
-      {hero && (() => {
-        const heroTitle  = hero.meta?.title  || hero.title  || '';
-        const heroPoster = hero.meta?.poster || hero.poster || '';
-        const heroDesc   = hero.meta?.description || hero.description || '';
-        return (
-          <div className="hero-banner">
-            {heroPoster && (
-              <div
-                className="hero-backdrop"
-                style={{ backgroundImage: `url(${heroPoster})`, filter: 'blur(1px) brightness(0.45)' }}
-              />
-            )}
-            <div className="hero-gradient" />
-            <div className="hero-content">
-              <p className="hero-type">{hero.type?.toUpperCase()} {hero.year && `· ${hero.year}`}</p>
-              <h1 className="hero-title">{heroTitle}</h1>
-              {heroDesc && <p className="hero-desc">{heroDesc}</p>}
-              <div className="hero-actions">
-                <button className="hero-btn-play" onClick={() => router.push(`/main/watch/${hero.id}`)}>
-                  <PlayArrowIcon style={{ fontSize: 20 }} />
-                  {t('home.playNow')}
-                </button>
-                <button className="hero-btn-info" onClick={() => router.push(`/main/content/${hero.id}`)}>
-                  <InfoOutlinedIcon style={{ fontSize: 18 }} />
-                  {t('home.moreInfo')}
-                </button>
-              </div>
-            </div>
-            {featured.length > 1 && (
-              <div className="hero-dots">
-                {featured.map((_, i) => (
-                  <button
-                    key={i}
-                    className={`hero-dot ${i === heroIdx ? 'active' : ''}`}
-                    onClick={() => setHeroIdx(i)}
-                    aria-label={`Slide ${i + 1}`}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {/* ── Tendências — mini séries (cards horizontais), fixo no topo ── */}
+      {trending.length > 0 && (
+        <TrendingCarousel items={trending} title={t('home.trending')} />
+      )}
 
       {/* ── Continue Watching ── */}
       {continueW.length > 0 && (
@@ -250,17 +266,39 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* FIX: pedido explícito — a linha "Vídeos" deve ser a primeira a
-          aparecer nos cards do /main, antes de Popular/Filmes/Séries/Anime,
-          que seguem depois na mesma ordem de sempre. */}
-      <ContentRow label={t('home.videos')}       items={videos}  router={router} t={t} onSeeAll={() => router.push('/main/catalog?type=video')} />
-      <ContentRow label={t('home.popularNow')}   items={popular} router={router} t={t} onSeeAll={() => router.push('/main/catalog?sort=popular')} />
-      <div style={{ margin: '20px 0', display: 'flex', justifyContent: 'center' }}>
-        <DisplayAdBanner />
+      {/* ── Grelha única, todos os tipos e recentes misturados (feed) ── */}
+      <div className="content-grid" data-tv-container>
+        {gridItems.map((item: any, i: number) => {
+          const title  = item.meta?.title  || item.title  || '—';
+          const poster = item.meta?.poster || item.poster;
+          const rating = item.meta?.rating || item.rating;
+          return (
+            <ContentCard
+              key={item.id}
+              id={item.id}
+              title={title}
+              poster={poster}
+              year={item.year}
+              type={item.type}
+              rating={rating}
+              href={`/main/watch/${item.id}`}
+              onClick={() => router.push(`/main/watch/${item.id}`)}
+              style={{ animationDelay: `${(i % ITEMS_LIMIT) * 0.03}s` }}
+            />
+          );
+        })}
       </div>
-      <ContentRow label={t('home.latestMovies')} items={movies}  router={router} t={t} onSeeAll={() => router.push('/main/catalog?type=movie')} />
-      <ContentRow label={t('home.series')}       items={series}  router={router} t={t} onSeeAll={() => router.push('/main/catalog?type=series')} />
-      <ContentRow label={t('home.anime')}        items={anime}   router={router} t={t} onSeeAll={() => router.push('/main/catalog?type=anime')} />
+
+      {/* Sentinela do scroll infinito — invisível, só dispara o
+          IntersectionObserver acima. Sempre presente enquanto houver mais
+          páginas, para o observer conseguir voltar a "vê-la" depois de cada
+          carga (novos itens empurram-na mais para baixo). */}
+      {hasMore && (
+        <div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" />
+      )}
+      {loadingMore && (
+        <ContentGridSkeleton count={6} />
+      )}
     </div>
   );
 }

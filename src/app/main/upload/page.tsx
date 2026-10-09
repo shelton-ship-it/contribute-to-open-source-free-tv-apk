@@ -1,13 +1,18 @@
 'use client';
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/store/auth';
 import { uploadApi } from '@/lib/api';
 import UploadTermsModal from '@/components/modals/UploadTermsModal';
+import UploadRulesModal from '@/components/modals/UploadRulesModal';
+import UploadGuideModal from '@/components/modals/UploadGuideModal';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import BlockIcon from '@mui/icons-material/Block';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import VerifiedUserOutlinedIcon from '@mui/icons-material/VerifiedUserOutlined';
 
 // app/main/upload/page.tsx
 //
@@ -27,24 +32,37 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 const TERMS_KEY = 'pixgo_upload_terms_accepted';
 const SERIES_TYPES = ['series', 'anime', 'dorama'];
+const WORKSPACE_URL = 'https://workspace.pixgo.qzz.io';
 
-const TYPE_ICONS: Record<string, string> = {
-  movie: '🎬',
-  series: '📺',
-  anime: '⛩',
-  dorama: '🌸',
-  documentary: '🔭',
-};
+// FIX (pedido explícito): tipos novos pedidos para a página de upload
+// (entretenimento, finanças, viagens, estudos, cursos) — aparecem primeiro
+// no <select>, os tipos de vídeo/série já existentes vêm a seguir. Também
+// adicionados a schemas.content (pixel_service_v1/lib/validation.js) e às
+// listas CONTENT_TYPES do catálogo, para não serem rejeitados na aprovação
+// em /admin nem ficarem de fora do catálogo agregado.
+const NEW_TYPES = ['entertainment', 'finance', 'travel', 'education', 'courses'] as const;
+const EXISTING_TYPES = ['movie', 'series', 'anime', 'dorama', 'documentary'] as const;
+
+// Ordem do menu = ordem desta lista; o valor inicial é sempre o 1.º item.
+const TYPE_OPTIONS = [...NEW_TYPES, ...EXISTING_TYPES] as const;
 
 export default function UploadPage() {
   const { t } = useTranslation();
   const user = useAuthStore(s => s.user);
   const [termsAccepted, setTermsAccepted] = useState(true); // evita flash do modal antes do useEffect
   const [showTerms, setShowTerms] = useState(false);
+  // FIX (pedido explícito): distinto do consentimento acima (esse é
+  // "uma vez só", persistido em localStorage). Este par de modais é um
+  // lembrete informativo, sem Aceito/Recusa — reaparece sempre que se
+  // entra nesta página, mesmo depois dos termos já terem sido aceites em
+  // sessões anteriores. 'rules' aparece primeiro; ao clicar em qualquer um
+  // dos botões (Entendi ou Ocultar, ambos apenas fecham) avança para
+  // 'guide'; ao fechar esse, some de vez até à próxima visita à página.
+  const [helperModal, setHelperModal] = useState<'rules' | 'guide' | null>(null);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [type, setType] = useState('movie');
+  const [type, setType] = useState<string>(TYPE_OPTIONS[0]);
   const [year, setYear] = useState('');
   const [lang, setLang] = useState('pt');
   const [url, setUrl] = useState('');
@@ -75,6 +93,9 @@ export default function UploadPage() {
     const accepted = localStorage.getItem(TERMS_KEY) === 'true';
     setTermsAccepted(accepted);
     setShowTerms(!accepted);
+    // Só entra na fila rules -> guide depois do consentimento único (acima)
+    // já estar tratado — nunca se sobrepõe ao UploadTermsModal.
+    if (accepted) setHelperModal('rules');
   }, []);
 
   // Consulta periódica do estado enquanto estiver "pending".
@@ -165,6 +186,7 @@ export default function UploadPage() {
           localStorage.setItem(TERMS_KEY, 'true');
           setTermsAccepted(true);
           setShowTerms(false);
+          setHelperModal('rules'); // primeira vez: mostra a fila rules -> guide já a seguir, não só nas próximas visitas
         }}
         onClose={() => window.history.back()}
       />
@@ -175,8 +197,36 @@ export default function UploadPage() {
 
   return (
     <div style={{ maxWidth: 640, margin: '0 auto' }}>
+      {helperModal === 'rules' && <UploadRulesModal onDismiss={() => setHelperModal('guide')} />}
+      {helperModal === 'guide' && <UploadGuideModal onDismiss={() => setHelperModal(null)} />}
+
       <div className="page-header">
-        <h1 className="page-title">{t('upload.formTitle')}</h1>
+        <div>
+          <h1 className="page-title">{t('upload.formTitle')}</h1>
+          <p className="page-subtitle">{t('upload.formSubtitle')}</p>
+        </div>
+      </div>
+
+      {/* FIX (pedido explícito): botão bem visível para o Workspace, com o
+          texto pedido por cima. Abre numa aba nova — o Workspace é um
+          produto à parte (workspace.pixgo.qzz.io), sair da página de
+          upload a meio do preenchimento seria perder o formulário. */}
+      <div className="card" style={{ padding: '16px 18px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>
+            {t('upload.workspaceLabel')}
+          </div>
+          <a
+            href={WORKSPACE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-primary"
+            style={{ display: 'inline-flex' }}
+          >
+            <OpenInNewIcon style={{ fontSize: 16 }} />
+            {t('upload.workspaceButton')}
+          </a>
+        </div>
       </div>
 
       {result ? (
@@ -232,15 +282,13 @@ export default function UploadPage() {
               <input className="form-input" value={title} onChange={e => setTitle(e.target.value)} required />
             </div>
 
-            <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+            <div className="form-grid form-grid-3">
               <div>
                 <label className="form-label">{t('upload.fieldType')}</label>
                 <select className="form-select" value={type} onChange={e => setType(e.target.value)}>
-                  <option value="movie">{TYPE_ICONS.movie} {t('catalog.movie')}</option>
-                  <option value="series">{TYPE_ICONS.series} {t('catalog.series')}</option>
-                  <option value="anime">{TYPE_ICONS.anime} {t('catalog.anime')}</option>
-                  <option value="dorama">{TYPE_ICONS.dorama} {t('catalog.dorama')}</option>
-                  <option value="documentary">{TYPE_ICONS.documentary} {t('catalog.documentary')}</option>
+                  {TYPE_OPTIONS.map(tp => (
+                    <option key={tp} value={tp}>{t(`catalog.${tp}`)}</option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -348,6 +396,16 @@ export default function UploadPage() {
             )}
 
             {error && <p style={{ color: 'var(--color-primary)', fontSize: '0.82rem' }}>{error}</p>}
+
+            {/* Informação sobre o detector de copyright da plataforma */}
+            <div className="creative-id">
+              <VerifiedUserOutlinedIcon className="creative-id-icon" style={{ fontSize: 20 }} />
+              <p className="creative-id-text">
+                <strong>{t('upload.creativeIdTitle')}.</strong>{' '}
+                {t('upload.creativeIdBody')}
+                <Link href="/main/legal?tab=ipr">{t('upload.creativeIdLearn')}</Link>
+              </p>
+            </div>
 
             <button type="submit" className="btn btn-primary" disabled={submitting} style={{ justifyContent: 'center' }}>
               {submitting ? t('upload.submitting') : t('upload.submit')}

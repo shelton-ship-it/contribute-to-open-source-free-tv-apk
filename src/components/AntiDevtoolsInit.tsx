@@ -54,7 +54,12 @@ export default function AntiDevtoolsInit() {
 
     import('disable-devtool').then(({ default: DisableDevtool }) => {
       DisableDevtool({
-        interval: 60,
+        // OTIMIZAÇÃO (produção): 60ms mantinha este loop de deteção a
+        // correr ~16x/seg, para sempre, em todo dispositivo não-TV —
+        // overhead constante que nunca parava, mesmo fora de qualquer
+        // interação. 1000ms continua a apanhar DevTools quase de
+        // imediato (em termos humanos) com uma fração do custo.
+        interval: 1000,
         disableMenu: true,
         disableSelect: false,
         disableCopy: false,

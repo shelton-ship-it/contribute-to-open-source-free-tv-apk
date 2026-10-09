@@ -75,7 +75,29 @@ function getNetworkDeviceHints(): Record<string, string> {
   return hints;
 }
 
+// Handshake PACIENTE: o /stream responde 404/500/503 transitórios (KV/Turso frio) e à 2.ª tentativa
+// funciona. Antes uma única falha deixava o vídeo parado (spinner desligado) até o utilizador
+// atualizar a página. Repete (0,4→5 s) até ~90 s; só 429/401/403 saem logo (resposta definitiva).
 async function performECDH(
+  streamApiUrl: string,
+  token: string,
+): Promise<{ drmKeyHex: string; masterUrl: string; noncesUrl?: string; segExt?: 'bin' | 'ts'; quality?: string }> {
+  const delays = [400, 800, 1600, 3000, 5000];
+  const deadline = Date.now() + 90_000;
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await performECDHOnce(streamApiUrl, token);
+    } catch (e: any) {
+      const definitive = e?.status === 429 || e?.status === 401 || e?.status === 403;
+      const wait = delays[Math.min(attempt++, delays.length - 1)];
+      if (definitive || Date.now() + wait >= deadline) throw e;
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+}
+
+async function performECDHOnce(
   streamApiUrl: string,
   token: string,
 ): Promise<{ drmKeyHex: string; masterUrl: string; noncesUrl?: string; segExt?: 'bin' | 'ts'; quality?: string }> {
@@ -108,7 +130,9 @@ async function performECDH(
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body?.message || `Stream API error ${res.status}`);
+    const err: any = new Error(body?.message || `Stream API error ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
 
   const d = await res.json();
@@ -414,12 +438,13 @@ interface Props {
   onEnded?:             () => void;
   onNextEpisode?:       () => void;
   onClose?:             () => void;
-  onFreeTimeExhausted?: (plans: any[]) => void;
+  onFreeTimeExhausted?: (plans: any[], message?: string) => void;
+  onSessionReplaced?:   (message: string) => void;
   autoPlay?:            boolean;
 }
 
-// Controlo mínimo exposto pra rodada de anúncios (mid-roll) poder pausar/
-// retomar sem tocar em nada da lógica interna do player (ECDH/HLS.js).
+// Controlo mínimo exposto ao consumidor (watch/[id]/page.tsx) pra
+// pausar/retomar sem tocar em nada da lógica interna do player (ECDH/HLS.js).
 export interface ShakaPlayerHandle {
   pause: () => void;
   play:  () => void;
@@ -435,6 +460,7 @@ const ShakaPlayer = forwardRef<ShakaPlayerHandle, Props>(function ShakaPlayer({
   onEnded,
   onNextEpisode,
   onFreeTimeExhausted,
+  onSessionReplaced,
   autoPlay = true,
 }: Props, ref) {
   const { t } = useTranslation();
@@ -471,7 +497,7 @@ const ShakaPlayer = forwardRef<ShakaPlayerHandle, Props>(function ShakaPlayer({
 
   // FIX (loop de reset do player): onFreeTimeExhausted é uma prop função.
   // O consumidor (watch/[id]/page.tsx) precisa de re-renderizar a cada
-  // timeupdate (pro MidRollOverlay saber a posição), e nesses renders passa
+  // timeupdate (pra gravar o progresso), e nesses renders passa
   // um novo `() => ...` inline — nova identidade a cada render. Como init()
   // e sendHeartbeat() tinham onFreeTimeExhausted nas deps, isso recriava
   // init a cada render, o que re-disparava o useEffect de montagem
@@ -480,6 +506,8 @@ const ShakaPlayer = forwardRef<ShakaPlayerHandle, Props>(function ShakaPlayer({
   // ela entrar em nenhuma dependência de useCallback.
   const onFreeTimeExhaustedRef = useRef(onFreeTimeExhausted);
   useEffect(() => { onFreeTimeExhaustedRef.current = onFreeTimeExhausted; }, [onFreeTimeExhausted]);
+  const onSessionReplacedRef = useRef(onSessionReplaced);
+  useEffect(() => { onSessionReplacedRef.current = onSessionReplaced; }, [onSessionReplaced]);
 
   const heartbeatUrl = streamApiUrl ? streamApiUrl.replace(/\/stream(\?.*)?$/, '/heartbeat') : '';
 
@@ -503,12 +531,20 @@ const ShakaPlayer = forwardRef<ShakaPlayerHandle, Props>(function ShakaPlayer({
         },
         body: JSON.stringify({ position: Math.floor(v.currentTime) }),
       });
+      if (res.status === 409) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+        const body = await res.json().catch(() => ({}));
+        v.pause();
+        onSessionReplacedRef.current?.(body?.message || 'A sua sessão foi encerrada neste dispositivo.');
+        return;
+      }
       if (res.status === 429) {
         clearInterval(heartbeatRef.current);
         heartbeatRef.current = null;
         const body = await res.json().catch(() => ({}));
         v.pause();
-        onFreeTimeExhaustedRef.current?.(body?.plans ?? []);
+        onFreeTimeExhaustedRef.current?.(body?.plans ?? [], body?.message);
       }
       const rem = res.headers.get('X-Free-Time-Remaining-Seconds');
       if (rem) v.dispatchEvent(new CustomEvent('freetimeupdate', { detail: { remainingSeconds: +rem }, bubbles: true }));
@@ -658,11 +694,16 @@ const ShakaPlayer = forwardRef<ShakaPlayerHandle, Props>(function ShakaPlayer({
         // FIX: estava 0 (sem timeout). No ramo de rede o timeout real é
         // tratado no BinLoader (fetch corre dentro do worker); isto mantém
         // o resto do pipeline hls.js consistente.
-        fragLoadingTimeOut:     20_000,
-        manifestLoadingTimeOut: 20_000,
-        levelLoadingTimeOut:    20_000,
-        fragLoadingMaxRetry:   4,
+        // Paciência longa (antes 20 s/4 retries): um segmento grande em rede lenta não cabia em
+        // 20 s, falhava sempre igual e o vídeo "encravava". O BinLoader lê este timeout.
+        fragLoadingTimeOut:     90_000,
+        manifestLoadingTimeOut: 60_000,
+        levelLoadingTimeOut:    60_000,
+        fragLoadingMaxRetry:   10,
+        manifestLoadingMaxRetry: 6,
+        levelLoadingMaxRetry:    6,
         fragLoadingRetryDelay: 500,
+        fragLoadingMaxRetryTimeout: 8_000,
         maxBufferLength:    lowRam ? 20 : 60,
         maxMaxBufferLength: lowRam ? 30 : 120,
         // back-buffer grande só ajuda em pequenos recuos; 60s era exagero
@@ -713,18 +754,29 @@ const ShakaPlayer = forwardRef<ShakaPlayerHandle, Props>(function ShakaPlayer({
 
       hls.on(Hls.Events.ERROR, (_: any, data: any) => {
         if (!data.fatal) return;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR)    hls.startLoad();
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR)    { setTimeout(() => hls.startLoad(), 1500); }
         else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-        else { console.error('[hls.js] fatal:', data); setLoading(false); }
+        else {
+          // Erro fatal "outro": antes só desligava o spinner e deixava o vídeo parado. Agora
+          // volta a inicializar o player do zero (a rede/CDN costuma estar de volta num instante).
+          console.error('[hls.js] fatal:', data);
+          lastInitKey.current = '';
+          setTimeout(() => { if (videoRef.current) init(); }, 3000);
+        }
       });
 
       hls.loadSource(info.masterUrl);
       hls.attachMedia(videoRef.current);
 
     } catch (e: any) {
-      setLoading(false);
-      if (e?.status === 429) { lastInitKey.current = ''; onFreeTimeExhaustedRef.current?.(e.plans ?? []); }
-      else console.error('[init]', e);
+      if (e?.status === 429) { setLoading(false); lastInitKey.current = ''; onFreeTimeExhaustedRef.current?.(e.plans ?? [], e.message); }
+      else {
+        // Depois de ~90 s de tentativas: mantém o spinner e volta a tentar em vez de ficar parado.
+        console.error('[init]', e);
+        lastInitKey.current = '';
+        if (e?.status !== 401 && e?.status !== 403) setTimeout(() => { if (videoRef.current) init(); }, 5000);
+        else setLoading(false);
+      }
     }
   }, [streamApiUrl, token, offlinePlayback, startTime, autoPlay, destroyHls]);
 

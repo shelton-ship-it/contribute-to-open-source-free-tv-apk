@@ -62,6 +62,10 @@ function detectTVVendor(ua: string): TVVendor {
   if (typeof window !== 'undefined' && window.__PIXGO_TV_VENDOR__) {
     return window.__PIXGO_TV_VENDOR__;
   }
+  // Bandeira do APK Android TV (ver isLikelyTV): sem marcador no UA, assume androidtv.
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('pixgo_tv') === '1' && ua.includes('android')) return 'androidtv';
+  } catch { /* ignora */ }
   if (ua.includes('tizen')) return 'tizen';
   if (ua.includes('webos')) return 'webos';
   if (ua.includes('fire tv') || ua.includes('firetv') || ua.includes('aftm') || ua.includes('aftb')) return 'firetv';

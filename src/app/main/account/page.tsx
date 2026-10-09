@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/store/auth';
@@ -12,6 +13,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
 import ChildCareIcon from '@mui/icons-material/ChildCare';
 import toast from 'react-hot-toast';
+import PlansNoticeModal from '@/components/modals/PlansNoticeModal';
 
 const TABS = ['profile', 'security', 'subscription', 'profiles', 'help'] as const;
 
@@ -24,6 +26,8 @@ export default function AccountPage() {
   const fetchMe = useAuthStore(s => s.fetchMe);
 
   const [tab,    setTab]    = useState<typeof TABS[number]>('profile');
+  // Aviso jurídico das assinaturas: abre sempre que se clica na aba "Assinatura".
+  const [showPlansNotice, setShowPlansNotice] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pf, setPf]         = useState({ name: '', email: '' });
   const [pw, setPw]         = useState({ current_password: '', new_password: '' });
@@ -122,6 +126,7 @@ export default function AccountPage() {
 
   return (
     <div style={{ maxWidth: 680 }}>
+      {showPlansNotice && <PlansNoticeModal onDismiss={() => setShowPlansNotice(false)} />}
       <div className="page-header">
         <h1 className="page-title">{t('account.title')}</h1>
         <p className="page-subtitle">{t('account.subtitle')}</p>
@@ -129,7 +134,7 @@ export default function AccountPage() {
 
       <div className="tabs">
         {TABS.map(tb => (
-          <button key={tb} className={`tab ${tab === tb ? 'active' : ''}`} onClick={() => setTab(tb)}>
+          <button key={tb} className={`tab ${tab === tb ? 'active' : ''}`} onClick={() => { setTab(tb); if (tb === 'subscription') setShowPlansNotice(true); }}>
             {{ profile: t('account.profile'), security: t('account.security'), subscription: t('account.subscription'), profiles: t('account.profiles'), help: t('contact.support') }[tb]}
           </button>
         ))}
@@ -140,7 +145,7 @@ export default function AccountPage() {
           <div className="card-header"><span className="card-title">{t('account.profile')}</span></div>
           <form className="card-body" onSubmit={saveProfile}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20, padding: 13, background: 'var(--color-bg-darker)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
-              <div style={{ width: 46, height: 46, borderRadius: '50%', background: 'linear-gradient(135deg,var(--color-primary),#8c3bff)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: '1.05rem', color: '#fff', flexShrink: 0 }}>{initials}</div>
+              <div style={{ width: 46, height: 46, borderRadius: '50%', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: '1.05rem', color: '#000', flexShrink: 0 }}>{initials}</div>
               <div>
                 <div style={{ fontWeight: 700 }}>{user?.name}</div>
                 <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>@{user?.username}</div>
@@ -194,8 +199,15 @@ export default function AccountPage() {
           <div className="card" style={{ marginBottom: 14 }}>
             <div className="card-header"><span className="card-title">{t('account.currentPlan')}</span></div>
             <div className="card-body">
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 13, background: isPremium ? 'rgba(229,9,20,0.06)' : 'var(--color-bg-darker)', border: `1px solid ${isPremium ? 'rgba(229,9,20,0.25)' : 'var(--color-border)'}`, borderRadius: 8 }}>
-                <div>
+              {/* FIX (pedido explícito — otimização mobile das páginas de
+                  conta): esta linha juntava texto (nome do plano, validade,
+                  perfis usados) e um botão/badge lado a lado sem
+                  flexWrap nem minWidth no bloco de texto — em ecrãs
+                  estreitos, texto mais longo (ex.: com "Válido até" e
+                  contagem de perfis) podia empurrar a largura total para
+                  além do ecrã em vez de quebrar linha. */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, padding: 13, background: isPremium ? 'rgba(229,9,20,0.06)' : 'var(--color-bg-darker)', border: `1px solid ${isPremium ? 'rgba(229,9,20,0.25)' : 'var(--color-border)'}`, borderRadius: 8 }}>
+                <div style={{ minWidth: 0 }}>
                   <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem', textTransform: 'capitalize', marginBottom: 3 }}>{plan?.id || 'free'} Plan</div>
                   <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>{isPremium ? t('account.premiumDesc') : t('account.freeDesc')}</div>
                   {isPremium && plan?.expires_at && (
@@ -344,13 +356,17 @@ export default function AccountPage() {
             </form>
           </div>
 
-          {/* Direitos autorais — só e-mail */}
+          {/* Direitos autorais: botão Denunciar como primeira opção, e-mail como alternativa */}
           <div className="card" style={{ padding: 18 }}>
             <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 4 }}>{t('contact.copyright')}</h3>
-            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: 10 }}>{t('contact.copyrightDesc')}</p>
-            <a href={`mailto:${t('contact.copyrightEmail')}`} style={{ display: 'inline-block', fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 700 }}>
-              {t('contact.copyrightEmail')}
-            </a>
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: 12 }}>{t('contact.copyrightDesc')}</p>
+            <Link href="/copyright" className="btn btn-primary btn-sm">{t('contact.reportCopyrightButton')}</Link>
+            <p style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginTop: 12 }}>
+              {t('contact.orEmail')}{' '}
+              <a href={`mailto:${t('contact.copyrightEmail')}`} style={{ fontFamily: 'monospace', color: 'var(--color-primary)', fontWeight: 700 }}>
+                {t('contact.copyrightEmail')}
+              </a>
+            </p>
           </div>
 
           {/* Suporte — formulário + e-mail */}

@@ -3,14 +3,14 @@
   "host": "www.pixgo.qzz.io",
   "name": "Pixgo",
   "launcherName": "Pixgo",
-  "display": "standalone",
+  "display": "fullscreen",
   "themeColor": "#e50914",
   "navigationColor": "#0a0a0c",
   "navigationColorDark": "#0a0a0c",
   "navigationDividerColor": "#0a0a0c",
   "backgroundColor": "#0a0a0c",
   "enableNotifications": false,
-  "startUrl": "/main",
+  "startUrl": "/main?pixgo_tv=1",
   "iconUrl": "https://www.pixgo.qzz.io/icons/icon-512.png",
   "maskableIconUrl": "https://www.pixgo.qzz.io/icons/icon-512.png",
   "splashScreenFadeOutDuration": 300,
@@ -21,23 +21,37 @@
   "appVersionName": "1.0.0",
   "appVersionCode": 1,
   "shortcuts": [
-    { "name": "Início", "shortName": "Início", "url": "/main", "chosenIconUrl": "https://www.pixgo.qzz.io/icons/icon-96.png" },
-    { "name": "TV ao Vivo", "shortName": "TV", "url": "/main/channels", "chosenIconUrl": "https://www.pixgo.qzz.io/icons/icon-96.png" }
+    {
+      "name": "Início",
+      "shortName": "Início",
+      "url": "/main?pixgo_tv=1",
+      "chosenIconUrl": "https://www.pixgo.qzz.io/icons/icon-96.png"
+    },
+    {
+      "name": "TV ao Vivo",
+      "shortName": "TV",
+      "url": "/main/channels?pixgo_tv=1",
+      "chosenIconUrl": "https://www.pixgo.qzz.io/icons/icon-96.png"
+    }
   ],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://www.pixgo.qzz.io/manifest.json",
-  "fallbackType": "customtabs",
+  "fallbackType": "webview",
   "features": {},
-  "alphaDependencies": { "enabled": false },
+  "alphaDependencies": {
+    "enabled": false
+  },
   "enableSiteSettingsShortcut": true,
   "isChromeOSOnly": false,
   "isMetaQuest": false,
   "fullScopeUrl": "https://www.pixgo.qzz.io/",
   "minSdkVersion": 21,
-  "orientation": "default",
+  "orientation": "landscape",
   "fingerprints": [],
   "additionalTrustedOrigins": [
-    { "webManifestUrl": "https://app.pixgo.qzz.io/manifest.json" }
+    {
+      "webManifestUrl": "https://app.pixgo.qzz.io/manifest.json"
+    }
   ],
   "retainedBundles": [],
   "protocolHandlers": [],

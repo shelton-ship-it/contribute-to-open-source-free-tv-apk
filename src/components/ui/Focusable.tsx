@@ -39,6 +39,7 @@
  */
 
 import React, { useEffect, useRef, useState, forwardRef } from 'react';
+import { isLikelyTV } from '@/lib/tv-navigation';
 
 export interface FocusableProps extends Omit<React.HTMLAttributes<HTMLElement>, 'onClick'> {
   children?: React.ReactNode;
@@ -95,7 +96,17 @@ const Focusable = forwardRef<HTMLElement, FocusableProps>(function Focusable(
       className={`${className} ${focused ? focusedClassName : ''}`.trim()}
       style={style}
       onClick={activateOnEnter}
-      onFocus={(e: React.FocusEvent<Element>) => { setFocused(true); onFocus?.(e as React.FocusEvent<HTMLElement>); }}
+      // FIX (pedido explícito, mandatório): focusedClassName ('tv-focused')
+      // é o destaque grande (contorno vermelho, "lift" do card) pensado
+      // para D-pad de TV — antes era aplicado em QUALQUER foco, em
+      // qualquer dispositivo. Num telemóvel, tocar num card com
+      // tabIndex=0 foca o elemento nativamente e o destaque ficava
+      // "preso" (sem rato, não há um evento equivalente a mouseleave que
+      // o tire). Agora só entra em dispositivos TV/set-top (isLikelyTV())
+      // — no telemóvel e no desktop com rato, o toque/clique continua a
+      // funcionar na mesma (onClick nem passa por aqui), só sem o
+      // contorno de TV a ficar colado ao ecrã.
+      onFocus={(e: React.FocusEvent<Element>) => { if (isLikelyTV()) setFocused(true); onFocus?.(e as React.FocusEvent<HTMLElement>); }}
       onBlur={(e: React.FocusEvent<Element>) => { setFocused(false); onBlur?.(e as React.FocusEvent<HTMLElement>); }}
       data-tv-focusable
       tabIndex={0}

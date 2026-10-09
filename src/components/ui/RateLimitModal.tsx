@@ -4,17 +4,26 @@ import React, { useRef, useEffect } from 'react';
 // Modal de "limite diário atingido" — usado pelo player de VOD (watch/[id])
 // e pelo player de canais (main/channels). Preço, nome e features vêm
 // SEMPRE de body.plans, devolvido pelo backend no 429 do heartbeat/stream
-// (ver buildUpsellPlans em middleware/rate-limit.js do api.rar) — nada
-// aqui é texto fixo.
+// (ver buildUpsellPlans em middleware/rate-limit.js do api.rar).
+//
+// FIX (API como única fonte de verdade): a frase de limite ("Você atingiu
+// o limite gratuito de 1 hora por dia") estava hardcoded aqui e ficou
+// desatualizada quando o backend passou de 1h/dispositivo para 2h/conta
+// (ver FREE_STREAM_LIMIT_MS em middleware/rate-limit.js). Agora usa sempre
+// `message`, o texto que o próprio 429 devolve (body.message) — se o
+// limite mudar outra vez no backend, este modal muda sozinho, sem deploy
+// de frontend. O fallback genérico só existe para nunca ficar em branco
+// caso um chamador antigo não passe `message`.
 export type UpsellPlan = {
   id: string; name: string; price: number; label: string;
   billing_cycle: string | null; features: string[];
 };
 
 export default function RateLimitModal({
-  plans, onClose, onUpgrade,
+  plans, message, onClose, onUpgrade,
 }: {
   plans: UpsellPlan[];
+  message?: string;
   onClose: () => void;
   onUpgrade: (planId: string) => void;
 }) {
@@ -35,7 +44,7 @@ export default function RateLimitModal({
             Limite diário atingido
           </h2>
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: 18, lineHeight: 1.6 }}>
-            Você atingiu o limite gratuito de 2 horas por dia. Assine para streaming ilimitado, sem anúncios.
+            {message || 'Limite diário do plano gratuito atingido. Assine para streaming ilimitado.'}
           </p>
 
           {featured && (

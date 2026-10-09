@@ -61,7 +61,10 @@ function storageDel(...keys: string[]) {
 // o Bearer/cookie no servidor a cada pedido; isto só evita reconsultar "quem
 // sou eu" sem necessidade.
 const ME_CACHE_KEY     = 'pixgo_me_cache';
-const ME_CACHE_TTL_MS  = 30 * 60 * 1000; // 30 minutos
+const ME_CACHE_TTL_MS  = 30 * 60 * 1000; // 30 minutos (plano pago)
+// Plano free: TTL curto — pode ter acabado de pagar (outro separador/dispositivo,
+// webhook a chegar) e o cache longo escondia o plano activo.
+const ME_CACHE_FREE_TTL_MS = 60 * 1000;
 const TOKEN_MIN_TTL_MS = 5  * 60 * 1000; // não confia em token a <5min de expirar
 
 interface MeCache {
@@ -131,7 +134,14 @@ async function refreshAccessToken(): Promise<string | null> {
       });
 
       if (!res.ok) {
-        storageDel('pixgo_token', 'pixgo_refresh');
+        // Só apaga os tokens quando o servidor diz que o refresh token é
+        // INVÁLIDO (401/403). 429, 5xx e 503 (backend/banco indisponível) são
+        // falhas passageiras — apagar aqui deslogava o utilizador por um
+        // soluço do servidor. Mantém tudo e devolve null (o pedido original
+        // simplesmente falha e será tentado de novo).
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
+          storageDel('pixgo_token', 'pixgo_refresh');
+        }
         return null;
       }
 
@@ -166,7 +176,7 @@ async function authedFetch(url: string, init: RequestInit = {}): Promise<Respons
   // com app.pixgo.qzz.io e as demais plataformas *.pixgo.qzz.io). Sem
   // isto, alguém autenticado só via app.pixgo.qzz.io nunca era reconhecido
   // aqui, mesmo com o cookie presente no browser.
-  const res = await fetch(url, { ...init, headers, credentials: 'include' });
+  const res = await fetch(url, { ...init, headers, credentials: 'include', cache: 'no-store' });
 
   if (res.status === 401) {
     const newToken = await refreshAccessToken();
@@ -176,7 +186,7 @@ async function authedFetch(url: string, init: RequestInit = {}): Promise<Respons
     useAuthStore.setState({ token: newToken });
     
     headers['Authorization'] = `Bearer ${newToken}`;
-    return fetch(url, { ...init, headers, credentials: 'include' });
+    return fetch(url, { ...init, headers, credentials: 'include', cache: 'no-store' });
   }
 
   return res;
@@ -186,6 +196,20 @@ async function authedFetch(url: string, init: RequestInit = {}): Promise<Respons
 
 // ── Hidratação síncrona a partir do cache local (evita bloquear o primeiro
 // render em rede — ver ME_CACHE_KEY acima) ──────────────────────────────────
+// FIX pagamentos: quem paga no hub (app.pixgo.qzz.io) volta aqui com ?px_paid=…
+// (ver CheckoutStatusPage.tsx do app). Sem isto, o cache local abaixo (30min)
+// continuava a mostrar o plano ANTIGO mesmo com a assinatura já activa no
+// servidor. Apaga o cache ANTES de hidratar → o fetchMe() vai sempre à rede.
+if (typeof window !== 'undefined') {
+  try {
+    const u = new URL(window.location.href);
+    if (u.searchParams.has('px_paid')) {
+      localStorage.removeItem('pixgo_me_cache');
+      u.searchParams.delete('px_paid');
+      window.history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+    }
+  } catch { /* melhor esforço */ }
+}
 const _cachedMe        = readMeCache();
 const _cachedToken     = storageGet('pixgo_token');
 const _tokenExpMs      = _cachedToken ? decodeJwtExpMs(_cachedToken) : null;
@@ -279,26 +303,33 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
+  // OTIMIZAÇÃO (produção): antes, isto fazia `await fetch(...)` ao backend
+  // e SÓ DEPOIS limpava o estado local — qualquer latência/cold start do
+  // endpoint (Worker/EdgeOne) bloqueava o botão de logout inteiro (3-5s
+  // reportados). O pedido de invalidação no servidor é "melhor esforço"
+  // por definição (catch vazio) — não há razão nenhuma para a UI esperar
+  // por ele. Agora: limpa localStorage + estado local IMEDIATAMENTE
+  // (o clique reage no mesmo frame), e dispara o fetch em paralelo,
+  // sem await, sem bloquear nada.
   logout: async () => {
-    try {
-      const t  = get().token;
-      const rt = storageGet('pixgo_refresh');
-      await fetch(`${API_BASE}/api/auth/logout`, {
-        method:  'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(t ? { 'Authorization': `Bearer ${t}` } : {}),
-        },
-        body: JSON.stringify({ refresh_token: rt }),
-        // Sem isto o browser ignora o Set-Cookie de limpeza do pixgo_session
-        // (cookie partilhado) devolvido pelo backend — ficava "deslogado"
-        // aqui mas ainda autenticado via cookie nas outras plataformas.
-        credentials: 'include',
-      });
-    } catch { /* melhor esforço */ }
+    const t  = get().token;
+    const rt = storageGet('pixgo_refresh');
 
     storageDel('pixgo_token', 'pixgo_refresh', ACTIVE_PROFILE_KEY, ME_CACHE_KEY);
     set({ user: null, plan: null, profiles: [], activeProfileId: null, token: null, loading: false });
+
+    fetch(`${API_BASE}/api/auth/logout`, {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(t ? { 'Authorization': `Bearer ${t}` } : {}),
+      },
+      body: JSON.stringify({ refresh_token: rt }),
+      // Sem isto o browser ignora o Set-Cookie de limpeza do pixgo_session
+      // (cookie partilhado) devolvido pelo backend — ficava "deslogado"
+      // aqui mas ainda autenticado via cookie nas outras plataformas.
+      credentials: 'include',
+    }).catch(() => { /* melhor esforço — UI já reagiu, não há nada a reverter */ });
   },
 
   fetchMe: async () => {
@@ -312,7 +343,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const token = get().token;
     const tokenExpMs = token ? decodeJwtExpMs(token) : null;
     const tokenFresh = tokenExpMs !== null && (tokenExpMs - Date.now() > TOKEN_MIN_TTL_MS);
-    const cacheFresh = !!cache && (Date.now() - cache.cachedAt < ME_CACHE_TTL_MS);
+    const isFreeCached = !cache?.plan || cache.plan.id === 'free' || cache.plan.is_active === false;
+    const cacheTtl   = isFreeCached ? ME_CACHE_FREE_TTL_MS : ME_CACHE_TTL_MS;
+    const cacheFresh = !!cache && (Date.now() - cache.cachedAt < cacheTtl);
 
     if (cache && token && tokenFresh && cacheFresh) {
       set({ hydrated: true }); // já deve estar true (hidratação síncrona), reforça por segurança
@@ -328,8 +361,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const res = await authedFetch(`${API_BASE}/api/auth/me`);
 
       if (!res.ok) {
-        storageDel('pixgo_token', 'pixgo_refresh', ACTIVE_PROFILE_KEY, ME_CACHE_KEY);
-        set({ user: null, plan: null, profiles: [], activeProfileId: null, token: null, hydrated: true });
+        // Só 401/403 (já depois da tentativa de refresh em authedFetch) significam
+        // "sessão inválida". Qualquer outra resposta (429, 500, 502, 503…) é falha
+        // do SERVIDOR: mantém token, cache e utilizador — antes, um 503 passageiro
+        // apagava a sessão e mandava o utilizador para o login.
+        if (res.status === 401 || res.status === 403) {
+          storageDel('pixgo_token', 'pixgo_refresh', ACTIVE_PROFILE_KEY, ME_CACHE_KEY);
+          set({ user: null, plan: null, profiles: [], activeProfileId: null, token: null, hydrated: true });
+        } else {
+          set({ hydrated: true, token: storageGet('pixgo_token') });
+        }
         return;
       }
 

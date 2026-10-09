@@ -1,4 +1,5 @@
 import './globals.css';
+import './tv-native.css';
 import type { Metadata, Viewport } from 'next';
 import Providers from '@/components/Providers';
 
@@ -56,6 +57,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             input, textarea { -webkit-user-select: text; user-select: text; }
           }
         `}</style>
+        {/* APK Android TV: marca o <html> ANTES da primeira pintura (sem flash de UI "web").
+            O startUrl do APK traz ?pixgo_tv=1; fica em localStorage (ver isLikelyTV). */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function(){try{
+            var q=new URLSearchParams(location.search).get('pixgo_tv');
+            if(q==='1')localStorage.setItem('pixgo_tv','1');
+            else if(q==='0')localStorage.removeItem('pixgo_tv');
+            if(localStorage.getItem('pixgo_tv')==='1'){
+              document.documentElement.classList.add('tv-mode','tv-app','tv-kbd');
+            }
+          }catch(e){}})();
+        `}} />
       </head>
       <body>
         <Providers>{children}</Providers>

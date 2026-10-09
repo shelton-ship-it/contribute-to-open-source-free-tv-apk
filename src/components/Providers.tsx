@@ -5,11 +5,13 @@ import { I18nextProvider } from 'react-i18next';
 import { Toaster } from 'react-hot-toast';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import i18n from '@/i18n';
+import i18n, { ensureLanguageLoaded } from '@/i18n';
 import { useAuthStore } from '@/store/auth';
 import LanguageModal from '@/components/modals/LanguageModal';
 import DisclaimerModal from '@/components/modals/DisclaimerModal';
+import ApkDownloadModal from '@/components/modals/ApkDownloadModal';
 import TVNavigationInit from '@/components/TVNavigationInit';
+import TVNativeShell from '@/components/TVNativeShell';
 import AntiDevtoolsInit from '@/components/AntiDevtoolsInit';
 
 const muiTheme = createTheme({
@@ -73,6 +75,8 @@ function AppCore({ children }: { children: React.ReactNode }) {
   return (
     <DisclaimerGate>
       {children}
+      {/* Convite para baixar o app Android (só Android, 1x por sessão, ver o próprio componente) */}
+      <ApkDownloadModal />
     </DisclaimerGate>
   );
 }
@@ -85,10 +89,13 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     const chosen = localStorage.getItem('pixgo_lang');
     if (!chosen) {
       setShowLang(true);
+      setI18nReady(true);
     } else {
-      i18n.changeLanguage(chosen);
+      // Idioma já foi carregado de forma síncrona em i18n/index.ts
+      // (detectInitialLang lê o mesmo localStorage); isto só garante que
+      // não avançamos antes do bundle desse idioma estar mesmo pronto.
+      ensureLanguageLoaded(chosen).finally(() => setI18nReady(true));
     }
-    setI18nReady(true);
   }, []);
 
   if (!i18nReady) return null;
@@ -103,6 +110,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             primeiro ecrã que qualquer TV nova vê fica sem resposta ao
             controle remoto. */}
         <TVNavigationInit />
+        <TVNativeShell />
 
         {/* Anti-DevTools global — desligado em TV e em desenvolvimento,
             ver comentário completo em AntiDevtoolsInit.tsx */}

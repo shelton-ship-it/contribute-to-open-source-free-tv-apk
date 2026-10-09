@@ -169,11 +169,17 @@ export default function DownloadsPage() {
       )}
 
       <style>{`
-        .dl-card-wrap:hover .dl-remove-btn  { opacity: 1 !important; pointer-events: auto !important; }
-        .dl-card-wrap:hover .dl-play-overlay { opacity: 1 !important; }
-        .dl-card-wrap:focus > div:first-child { border-color: rgba(229,9,20,0.55) !important; box-shadow: 0 0 0 3px rgba(229,9,20,0.25) !important; }
+        @media (hover: hover) and (pointer: fine) {
+          .dl-card-wrap:hover .dl-remove-btn  { opacity: 1 !important; pointer-events: auto !important; }
+          .dl-card-wrap:hover .dl-play-overlay { opacity: 1 !important; }
+        }
+        /* Toque: sem hover o botão de remover ficava inalcançável — sempre visível. */
+        @media (hover: none), (pointer: coarse) {
+          .dl-remove-btn { opacity: 1 !important; pointer-events: auto !important; }
+        }
+        .tv-mode .dl-card-wrap:focus > div:first-child { border-color: rgba(229,9,20,0.55) !important; box-shadow: 0 0 0 3px rgba(229,9,20,0.25) !important; }
         .dl-card-wrap:focus-visible { outline: none !important; }
-        .dl-card-wrap:focus::after { content: 'Del = remover'; position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: rgba(255,255,255,0.55); font-size: 0.6rem; padding: 2px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none; z-index: 10; }
+        .tv-mode .dl-card-wrap:focus::after { content: 'Del = remover'; position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: rgba(255,255,255,0.55); font-size: 0.6rem; padding: 2px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none; z-index: 10; }
       `}</style>
     </div>
   );

@@ -1,4 +1,6 @@
 'use client';
+import { HeroSkeleton, ContentGridSkeleton } from '@/components/ui/Skeleton';
+import { canHover } from '@/lib/hover';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
@@ -6,6 +8,7 @@ import { contentApi, myListApi } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
 import { startDownload, DownloadCancelledError, listActiveDownloads } from '@/lib/downloads';
 import { useDownloadsStore } from '@/store/downloads';
+import { useAppBack } from '@/lib/nav-history';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import BookmarkAddIcon from '@mui/icons-material/BookmarkAdd';
 import BookmarkAddedIcon from '@mui/icons-material/BookmarkAdded';
@@ -21,7 +24,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import toast from 'react-hot-toast';
 import Focusable from '@/components/ui/Focusable';
 import { loginRedirectUrl } from '@/lib/auth-redirect';
-import { prefetchPrerollAd } from '@/lib/adPrefetch';
+import { CHANNEL_SERIES_GENRE } from '@/lib/channelSeries';
 
 function normalizeContent(c: any) {
   return {
@@ -40,6 +43,7 @@ export default function ContentPage() {
   const params  = useParams();
   const id      = params.id as string;
   const router  = useRouter();
+  const handleBack = useAppBack('/main/catalog');
   const { t }   = useTranslation();
   const user    = useAuthStore(s => s.user);
   const activeProfileId = useAuthStore(s => s.activeProfileId);
@@ -57,16 +61,6 @@ export default function ContentPage() {
   // FIX: se já existir um download deste título em curso (ex.: retomado
   // automaticamente após um refresh — ver lib/downloads-resume.ts), reflecte
   // esse estado ao abrir a página em vez de mostrar sempre "Baixar" do zero.
-  // FIX (pré-carregamento de pre-roll): dispara o fetch do anúncio assim que
-  // a página de detalhes abre, não só quando o player monta. O utilizador
-  // normalmente passa alguns segundos aqui (sinopse, elenco, temporadas)
-  // antes de clicar em "Assistir" — tempo suficiente pro anúncio já estar
-  // pronto, eliminando o "checking" no AdPrerollGate. Falha/no-fill aqui é
-  // silencioso e sem custo: AdPrerollGate cai no fluxo normal de qualquer
-  // forma (ver lib/adPrefetch.ts).
-  useEffect(() => {
-    prefetchPrerollAd();
-  }, [id]);
 
   useEffect(() => {
     if (!id) return;
@@ -96,25 +90,41 @@ export default function ContentPage() {
             .catch(() => {});
         }
       })
-      .catch(() => {
-        toast.error(t('errors.notFound'));
-        router.push('/main/catalog');
+      .catch((e: any) => {
+        // Só um 404 REAL significa "não encontrado". Falha de rede/5xx (já depois de muita
+        // paciência em lib/api.ts) mostra erro de ligação e NÃO expulsa o utilizador da página.
+        if (e?.status === 404) {
+          toast.error(t('errors.notFound'));
+          router.push('/main/catalog');
+        } else {
+          toast.error(t('errors.networkError'));
+        }
       })
       .finally(() => setLoading(false));
   }, [id, activeProfileId]);
 
-  const toggleList = async () => {
+  // OTIMIZAÇÃO (produção): o botão "Assistir" só fazia router.push, nunca
+  // pré-buscado — a rota de destino fica pronta assim que a página abre.
+  useEffect(() => {
+    if (id) router.prefetch(`/main/watch/${id}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // OTIMIZAÇÃO (produção): atualiza a UI já, no mesmo clique; reverte
+  // silenciosamente só se o pedido ao servidor falhar mesmo.
+  const toggleList = () => {
     if (!user) { router.push(loginRedirectUrl()); return; }
     const profileId = useAuthStore.getState().activeProfileId;
     if (!profileId) { toast.error('Nenhum perfil disponível'); return; }
+
     if (inList) {
-      await myListApi.remove(profileId, id);
       setInList(false);
       toast(t('myList.removed'), { icon: '🗑' });
+      myListApi.remove(profileId, id).catch(() => { setInList(true); toast.error(t('errors.networkError')); });
     } else {
-      await myListApi.add(profileId, id);
       setInList(true);
       toast.success(t('myList.added'));
+      myListApi.add(profileId, id).catch(() => { setInList(false); toast.error(t('errors.networkError')); });
     }
   };
 
@@ -196,7 +206,7 @@ export default function ContentPage() {
     }
   }, [id, user, router, content]);
 
-  if (loading) return <div className="page-loading"><div className="loading-ring" /></div>;
+  if (loading) return (<div><HeroSkeleton /><ContentGridSkeleton count={6} /></div>);
   if (!content) return null;
 
   // FIX: 'dorama' passou a ser exibido como "Animações" e tratado como
@@ -225,7 +235,7 @@ export default function ContentPage() {
 
   return (
     <div>
-      <button className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }} onClick={() => router.back()}>
+      <button className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }} onClick={handleBack}>
         <ArrowBackIcon style={{ fontSize: 15 }} /> {t('common.back')}
       </button>
 
@@ -254,7 +264,7 @@ export default function ContentPage() {
                 <AccessTimeIcon style={{ fontSize: 13 }} />{Math.floor(content.duration / 60)}m
               </span>
             )}
-            {genres.slice(0, 3).map((g: string) => (
+            {genres.filter((g: string) => g !== CHANNEL_SERIES_GENRE).slice(0, 3).map((g: string) => (
               <span key={g} className="badge badge-gray" style={{ fontSize: '0.68rem' }}>{g}</span>
             ))}
           </div>
@@ -335,7 +345,7 @@ export default function ContentPage() {
                     style={{ padding: '11px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', borderBottom: '1px solid var(--color-border)', background: openSeason === si ? 'rgba(229,9,20,0.04)' : '' }}
                     onClick={() => setOpenSeason(openSeason === si ? -1 : si)}
                   >
-                    <span style={{ fontWeight: 700, fontSize: '0.875rem' }}>{t('content.season')} {season.season_number}</span>
+                    <span style={{ fontWeight: 700, fontSize: '0.875rem' }}>{t('content.season')} {season.number}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{season.episodes?.length} {t('content.episodes')}</span>
                       {openSeason === si ? <ExpandMoreIcon style={{ fontSize: 17 }} /> : <ChevronRightIcon style={{ fontSize: 17 }} />}
@@ -345,7 +355,7 @@ export default function ContentPage() {
                     <Focusable
                       key={ep.id}
                       style={{ padding: '9px 18px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'background 0.1s' }}
-                      onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = 'var(--color-card-hover)')}
+                      onMouseEnter={e => { if (canHover()) (e.currentTarget as HTMLElement).style.background = 'var(--color-card-hover)'; }}
                       onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = '')}
                       onClick={() => router.push(`/main/watch/${id}?episode=${ep.id}`)}
                     >
@@ -354,7 +364,7 @@ export default function ContentPage() {
                         : <div style={{ width: 80, height: 45, background: 'var(--color-bg-darker)', borderRadius: 5, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)' }}><MovieIcon style={{ fontSize: 16 }} /></div>
                       }
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: '0.84rem' }}>E{ep.episode_number} — {ep.title}</div>
+                        <div style={{ fontWeight: 600, fontSize: '0.84rem' }}>E{ep.number ?? ''}: {ep.title}</div>
                         {ep.description && (
                           <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginTop: 2, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                             {ep.description}

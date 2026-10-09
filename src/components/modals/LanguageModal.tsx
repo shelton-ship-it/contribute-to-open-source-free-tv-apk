@@ -1,7 +1,7 @@
 'use client';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { LANGUAGES } from '@/i18n';
+import { LANGUAGES, changeLanguageLazy } from '@/i18n';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import Focusable from '@/components/ui/Focusable';
 import { shouldAutoFocus } from '@/lib/tv-navigation';
@@ -11,7 +11,7 @@ export default function LanguageModal({ onClose }: { onClose: () => void }) {
   const [selected, setSelected] = useState(i18n.language?.slice(0, 2) || 'pt');
 
   const handleContinue = () => {
-    i18n.changeLanguage(selected);
+    changeLanguageLazy(selected); // carrega o bundle do idioma antes de trocar
     localStorage.setItem('pixgo_lang', selected);
     onClose();
   };

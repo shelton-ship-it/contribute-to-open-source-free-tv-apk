@@ -68,7 +68,8 @@ export default function EmbedWatchPage() {
             bridge({ type: 'next_episode', episodeId: nextEpisodeId });
           }
         }}
-        onFreeTimeExhausted={(plans) => bridge({ type: 'freetime_exhausted', plans })}
+        onFreeTimeExhausted={(plans, message) => bridge({ type: 'freetime_exhausted', plans, message })}
+        onSessionReplaced={(message) => bridge({ type: 'session_replaced', message })}
       />
     </div>
   );

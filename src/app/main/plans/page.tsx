@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/store/auth';
 import { paymentsApi } from '@/lib/api';
 import CheckIcon from '@mui/icons-material/Check';
+import PlansNoticeModal from '@/components/modals/PlansNoticeModal';
 
 // ─────────────────────────────────────────────────────────────────────────
 // v3.0 — Preço, nome e features vêm SEMPRE do backend (GET /api/payments/plans,
@@ -26,6 +27,10 @@ type Plan = {
   // currency:'MZN', gateway:'zumbopay'). Ausentes = preço BRL/Hotmart normal.
   currency?: string;
   gateway?: string;
+  // Marca e métodos do gateway activo em MZ — decididos no backend (env MZ_GATEWAY
+  // do api-core): ['mpesa'] ou ['mpesa','emola']. Este ecrã só os mostra.
+  processor?: string | null;
+  methods?: string[] | null;
 };
 
 const PAYMENT_METHODS = [
@@ -35,11 +40,13 @@ const PAYMENT_METHODS = [
   { name: 'Boleto',     icon: '/payment-icons/boleto.svg' },
 ];
 
-// FIX: pedido explícito — quando o país detectado é Moçambique, o backend
-// já devolve currency:'MZN' nos planos (gateway ZumboPay) em vez do preço
-// BRL/Hotmart default. Nesse caso só o M-Pesa deve aparecer como método de
-// pagamento; nos restantes casos, mantém-se a lista tradicional acima.
-const MPESA_METHOD = { name: 'M-Pesa', icon: '/payment-icons/M-PESA_LOGO-01.svg' };
+// Em Moçambique o backend devolve currency:'MZN' nos planos e `methods` com os
+// métodos do gateway activo (M-Pesa; ou M-Pesa + e-Mola). Nos restantes casos,
+// mantém-se a lista tradicional acima.
+const MZ_METHODS: Record<string, { name: string; icon: string }> = {
+  mpesa: { name: 'M-Pesa', icon: '/payment-icons/M-PESA_LOGO-01.svg' },
+  emola: { name: 'e-Mola', icon: '/payment-icons/emola.svg' },
+};
 
 export default function PlansPage() {
   const { t }  = useTranslation();
@@ -48,14 +55,20 @@ export default function PlansPage() {
   const plan   = useAuthStore(s => s.plan);
   const isPremium = plan && plan.id !== 'free' && plan.is_active;
 
+  // Aviso jurídico: abre SEMPRE que se entra nesta página (sem memória).
+  const [showNotice, setShowNotice] = useState(true);
   const [plans,   setPlans]   = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(false);
 
   // Basta 1 plano vir com currency:'MZN' (todos os pagos partilham o mesmo
-  // override de país) para saber que o gateway activo é o ZumboPay/M-Pesa.
-  const isMZN = plans.some(p => p.currency === 'MZN');
-  const paymentMethods = isMZN ? [MPESA_METHOD] : PAYMENT_METHODS;
+  // override de país) para saber que estamos em MZ; `methods` diz quais mostrar.
+  const mzPlan = plans.find(p => p.currency === 'MZN');
+  const isMZN = !!mzPlan;
+  const mzMethods = (mzPlan?.methods || ['mpesa']).filter(m => MZ_METHODS[m]);
+  const paymentMethods = isMZN ? mzMethods.map(m => MZ_METHODS[m]) : PAYMENT_METHODS;
+  const payWithKey = mzMethods.includes('emola') ? 'plans.payWithMpesaEmola' : 'plans.payWithMpesa';
+  const payWithFallback = mzMethods.includes('emola') ? 'Pague por M-Pesa ou e-Mola' : 'Pague por M-Pesa';
 
   useEffect(() => {
     let active = true;
@@ -64,6 +77,20 @@ export default function PlansPage() {
       .catch(() => { if (active) setError(true); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
+  }, []);
+
+  // OTIMIZAÇÃO (produção): handleSubscribe navega via window.location.href
+  // para outro domínio (HUB_CHECKOUT_URL), então router.prefetch (só
+  // funciona para rotas do mesmo app Next) não se aplica aqui. O
+  // equivalente cross-origin é um preconnect — resolve DNS/TLS desse
+  // domínio ANTES do clique em "Assinar", em vez de só no momento do clique.
+  useEffect(() => {
+    const origin = new URL(HUB_CHECKOUT_URL).origin;
+    const link = document.createElement('link');
+    link.rel  = 'preconnect';
+    link.href = origin;
+    document.head.appendChild(link);
+    return () => { document.head.removeChild(link); };
   }, []);
 
   const handleSubscribe = (planId: string) => {
@@ -78,10 +105,19 @@ export default function PlansPage() {
 
   return (
     <div>
+      {showNotice && <PlansNoticeModal onDismiss={() => setShowNotice(false)} />}
       <div className="page-header">
         <div>
           <h1 className="page-title">{t('plans.title', 'Planos')}</h1>
           <p className="page-subtitle">{t('plans.subtitle', 'Escolha o plano que melhor se adapta ao seu uso')}</p>
+          {isMZN && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              {paymentMethods.map(m => (
+                <img key={m.name} src={m.icon} alt={m.name} style={{ height: 26 }} />
+              ))}
+              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t(payWithKey, payWithFallback)}</span>
+            </div>
+          )}
         </div>
       </div>
 

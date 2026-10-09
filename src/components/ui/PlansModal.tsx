@@ -8,7 +8,7 @@ import { useAuthStore } from '@/store/auth';
 //
 // Modal de planos — pedido explícito: aparece só no /catalogo (nunca em
 // /main, a home), só para utilizadores no plano free (inclui expirado —
-// mesma regra usada em middleware/ads.js/rate-limit.js), e no máximo 1x por
+// mesma regra usada em middleware/rate-limit.js), e no máximo 1x por
 // dia (persistente via localStorage, não sessionStorage — sobrevive a
 // fechar/reabrir o browser).
 //
@@ -28,7 +28,6 @@ type Plan = {
   name: string;
   price: number;
   label: string;
-  has_ads: boolean;
   billing_cycle: string | null;
   features: string[];
 };
@@ -56,7 +55,7 @@ export default function PlansModal() {
   // Mesma regra de "é free" usada no backend (isPlanActive): id 'free' ou
   // sem plan_id reconhecido conta como free. Não tentamos replicar a
   // verificação de expiração aqui (não temos expires_at no user do store) —
-  // se necessário no futuro, dá pra ler de GET /api/ads/status (`is_paid`),
+  // se necessário no futuro, dá pra ler de GET /api/payments/subscription,
   // que já faz essa conta correctamente no servidor.
   const isFree = !!user && (!user.plan_id || user.plan_id === 'free');
 
@@ -95,9 +94,14 @@ export default function PlansModal() {
     };
   }, [open]);
 
+  // OTIMIZAÇÃO (produção): botão "Ver planos" só fazia router.push, nunca
+  // pré-buscado — assim que o modal abre com dados, já prepara a rota.
+  useEffect(() => {
+    if (open) router.prefetch('/main/plans');
+  }, [open, router]);
+
   if (!open || !plans) return null;
 
-  const free      = plans.find(p => p.id === 'free');
   const paid      = plans.filter(p => p.id !== 'free');
   const featured  = paid.find(p => p.billing_cycle === 'monthly') || paid[0];
   const others    = paid.filter(p => p.id !== featured?.id);
@@ -111,23 +115,15 @@ export default function PlansModal() {
     >
       <div className="modal scale-in" style={{ maxWidth: 480, textAlign: 'center' }}>
         <div style={{ padding: '32px 26px' }}>
+          {/* FIX (pedido explícito): este modal é promocional — deve mostrar
+              só o essencial da assinatura (o plano pago em destaque), nunca
+              informação sobre a limitação do plano Free (nem o texto
+              genérico que existia aqui antes, nem o número de horas vindo
+              de PLANS.free.features em lib/edgeone.js). Título trocado de
+              "Conheça os nossos planos" para "Aproveite a promoção". */}
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 900, marginBottom: 18 }}>
-            Conheça os nossos planos
+            Aproveite a promoção
           </h2>
-
-          {free && (
-            <div style={{
-              background: 'var(--color-bg-darker)', borderRadius: 10, padding: '14px 16px',
-              marginBottom: 14, border: '1px solid var(--color-border)', textAlign: 'left',
-            }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: 4 }}>
-                {free.name} <span style={{ color: 'var(--color-text-muted)', fontWeight: 500 }}>(o seu plano actual)</span>
-              </div>
-              <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-                Streaming com anúncios, limitado a 2 horas por dia.
-              </div>
-            </div>
-          )}
 
           {featured && (
             <div style={{

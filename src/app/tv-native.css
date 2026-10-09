@@ -1,0 +1,74 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   tv-native.css — a app empacotada (APK Android TV) tem de parecer um programa
+   nativo, não uma página web. Referência: VS Code / Electron — superfície sólida,
+   zero artefactos de browser, foco nítido e contido.
+   TUDO escopado a `html.tv-app` (classe posta cedo pelo script do <head> e pelo
+   TVNativeShell só em TV): telemóvel e desktop ficam exactamente como estavam.
+   Só estilo "de aparência" — nenhuma regra mexe em layout, tamanhos ou posição.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html.tv-app {
+  color-scheme: dark;                       /* barras/inputs nativos escuros, sem flash branco */
+  background: #0a0a0c;
+  overscroll-behavior: none;                /* sem "elástico"/pull-to-refresh */
+  scroll-behavior: auto;                    /* scroll instantâneo com o comando (o suave faz lag) */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
+}
+
+html.tv-app body {
+  overscroll-behavior: none;
+  -webkit-user-select: none;                /* nada se selecciona, como numa app */
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+html.tv-app input,
+html.tv-app textarea,
+html.tv-app [contenteditable=""],
+html.tv-app [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  caret-color: var(--color-primary);
+}
+html.tv-app ::selection { background: rgba(229, 9, 20, 0.45); color: #fff; }
+
+/* Barras de scroll não existem numa app de TV (navega-se por foco). */
+html.tv-app *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+html.tv-app * { scrollbar-width: none; -ms-overflow-style: none; }
+
+/* Imagens e links não se arrastam nem mostram "ghost". */
+html.tv-app img, html.tv-app svg, html.tv-app video, html.tv-app a {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+/* Cursor escondido enquanto se navega com o comando; volta ao mexer o rato. */
+html.tv-app.tv-kbd,
+html.tv-app.tv-kbd * { cursor: none !important; }
+
+/* Foco ao estilo VS Code: contorno nítido de 3px, sem halo/brilho, sem "gordura". */
+html.tv-app :focus { outline: none; }
+html.tv-app :focus-visible {
+  outline: 3px solid var(--color-primary) !important;
+  outline-offset: 2px;
+  box-shadow: none !important;
+  transition: outline-color 90ms linear;
+}
+/* Campos de escrita: o próprio campo mostra o foco (borda), sem contorno extra. */
+html.tv-app input:focus-visible,
+html.tv-app textarea:focus-visible,
+html.tv-app select:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--color-primary) !important;
+}
+
+/* Botões/links respondem instantaneamente (sem espera de duplo-toque). */
+html.tv-app button, html.tv-app a, html.tv-app [role="button"], html.tv-app [tabindex] {
+  touch-action: manipulation;
+}
+
+/* Elementos de "só web" que não fazem sentido dentro de uma app instalada. */
+html.tv-app [data-web-only],
+html.tv-app pwa-install { display: none !important; }
