@@ -1,4 +1,4 @@
-// public/sw.js — Pixgo Service Worker v7
+// public/sw.js — Pixgo Service Worker v8
 // Strategy: Cache-first for static, Network-first for API
 // FIX v3: Offline auth — /api/auth/me cached so PWA não redireciona para login sem rede
 // FIX v4 (BUG): tentativa de intercetar /api/ cross-origin partiu tudo
@@ -16,8 +16,35 @@
 //         Component). Downloads agora abrem em /offline-player (rota fixa,
 //         sem segmento dinâmico, id por query string) — pré-cacheada aqui,
 //         100% IndexedDB, nunca chama nenhuma API.
+// FIX v8: cacheFirst em navigateWithOfflineFallback fazia qualquer página
+//         visitada uma vez (ex: /main/channels) ficar presa nessa cópia
+//         PARA SEMPRE — nenhum deploy seguinte era visto por quem já a
+//         tinha aberto antes, porque o SW só reinstala/limpa a cache
+//         quando ESTE ficheiro muda, e um deploy normal da app (EdgeOne)
+//         não toca no sw.js. Isto escondeu, entre outras coisas, o fix da
+//         pesquisa de canais (mountedRef em channels/page.tsx) de quem já
+//         tinha a página em cache. Subir CACHE_VERSION é o próprio gatilho:
+//         obriga o browser a ver este ficheiro como "novo", instalar o SW
+//         v8, e no activate() apagar toda a cache da v7 (linha ~57) — só
+//         depois disso é que os deploys seguintes voltam a aparecer sem
+//         precisar de limpar cache manualmente. A partir de agora: sempre
+//         que uma correção depender de uma página que já pode estar em
+//         cache de alguém, subir este número faz parte do fix.
 
-const CACHE_VERSION = 'pixgo-v7';
+// FIX v9: /main (hero rotativo + fileiras por tipo removidos, grelha única
+//         por recência) e /main/catalog (removido o videoFirst() que
+//         quebrava a ordenação) mudaram de lógica — bump obrigatório,
+//         como já documentado no FIX v8 acima, para quem já tinha estas
+//         páginas em cache não ficar preso na versão antiga.
+
+// FIX pagamentos: bump obrigatório — versões anteriores serviam /main/plans/*
+// (checkout, success, pending, analysis) em cacheFirst, ficando presas numa
+// cópia antiga. Agora essas rotas nunca passam pelo SW (ver NEVER_CACHE_PAGES).
+//
+// FIX denúncias de direitos autorais: bump obrigatório, as páginas /copyright,
+// /copyright/response e /copyright/portal mostram o estado atual das denúncias e
+// nunca passam pelo SW (ver NEVER_CACHE_PAGES).
+const CACHE_VERSION = 'pixgo-v11';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;
 const AUTH_CACHE    = `${CACHE_VERSION}-auth`;
 
@@ -40,6 +67,11 @@ const NEVER_CACHE = [
   '/api/auth/register',
   '/api/auth/refresh',
 ];
+
+// Páginas do fluxo de pagamento e do fluxo de denúncias: NUNCA cacheadas nem
+// interceptadas pelo SW (rede sempre, sem fallback de cache), para o plano ou
+// estado mostrado ser o real.
+const NEVER_CACHE_PAGES = ['/main/plans', '/copyright'];
 
 const AUTH_CACHE_PATHS = ['/api/auth/me'];
 
@@ -79,6 +111,7 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin && !isAuthMePath) return;
 
   if (NEVER_CACHE.some(p => url.pathname.startsWith(p))) return;
+  if (NEVER_CACHE_PAGES.some(p => url.pathname === p || url.pathname.startsWith(p + '/'))) return;
 
   if (isAuthMePath) {
     event.respondWith(authMeStrategy(request));
@@ -121,7 +154,7 @@ async function navigateWithOfflineFallback(request) {
 // Se offline sem cache → 503 (frontend redireciona para login, correto)
 async function authMeStrategy(request) {
   try {
-    const response = await fetch(request.clone());
+    const response = await fetch(request.clone(), { cache: 'no-store' });
     if (response.ok) {
       const cache = await caches.open(AUTH_CACHE);
       cache.put(request, response.clone());
