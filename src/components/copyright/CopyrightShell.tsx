@@ -79,6 +79,8 @@ function Header() {
                   key={l.code}
                   role="option"
                   aria-selected={l.code === current.code}
+                  tabIndex={0}
+                  data-tv-focusable
                   className="dropdown-item"
                   style={l.code === current.code ? { color: 'var(--color-text-light)' } : undefined}
                   onClick={() => { changeLanguageLazy(l.code); setOpen(false); }}

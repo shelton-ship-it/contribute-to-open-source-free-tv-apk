@@ -42,6 +42,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Montserrat:wght@600;700;800;900&display=swap" rel="stylesheet" />
+        {/* PWA: sem convite automático. O browser deixa de mostrar a sugestão/banner de
+            instalação (que aparecia uma vez e incomodava); quem quiser instalar a PWA usa o
+            ícone/menu "Instalar app" do próprio navegador, que continua disponível
+            (manifest.json + service worker mantêm-se). */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); });
+        `}} />
         {/* PWA service worker registration */}
         <script dangerouslySetInnerHTML={{ __html: `
           if ('serviceWorker' in navigator) {

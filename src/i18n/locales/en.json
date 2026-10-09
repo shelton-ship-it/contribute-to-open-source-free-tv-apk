@@ -354,7 +354,19 @@
     "step2Text": "Tap “Install anyway” (or “Scan app”). Google finishes the installation and Pixgo is ready to use.",
     "done": "Done! Open Pixgo, sign in and enjoy.",
     "again": "Download again",
-    "backToSite": "Back to the site"
+    "backToSite": "Back to the site",
+    "tvBadge": "Pixgo for TV",
+    "tvTitle": "Get Pixgo on your TV Box, Android TV and more",
+    "tvText": "A version built for the remote and the big screen. Install it on your TV Box, Android TV or Google TV and watch everything in cinema size.",
+    "tvCta": "Download for TV",
+    "tvAgain": "Download again (TV)",
+    "tvHint": "On the TV, open the downloaded file in the file manager and allow installing unknown apps when the system asks.",
+    "tvLoginLink": "Get Pixgo for TV",
+    "mobileBadge": "Phone and tablet",
+    "mobileTitle": "Get Pixgo on your Android",
+    "mobileText": "The app for Android phones and tablets: opens in one tap, full screen, with no browser in the way.",
+    "soon": "Download link coming soon.",
+    "neverShow": "Don't show again"
   },
   "disclaimer": {
     "title": "Pixgo Legal Notice",

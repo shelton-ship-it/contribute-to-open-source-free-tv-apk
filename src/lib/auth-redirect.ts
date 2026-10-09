@@ -35,3 +35,13 @@ export function loginRedirectUrl(path: '/auth/login' | '/auth/register' | '/auth
   const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
   return `${path}?return_to=${encodeURIComponent(returnTo)}`;
 }
+
+/**
+ * URL do hub (app.pixgo.qzz.io) com return_to. Numa TV leva também pixgo_tv=1: o hub
+ * é outra origem (não vê o localStorage do site), e sem isto abria o login em modo
+ * telemóvel — sem navegação por comando e com o convite "baixar app" de Android.
+ */
+export function hubUrl(base: string, returnTo: string): string {
+  const tv = typeof window !== 'undefined' && isLikelyTV() ? '&pixgo_tv=1' : '';
+  return `${base}?return_to=${encodeURIComponent(returnTo)}${tv}`;
+}

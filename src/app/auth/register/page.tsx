@@ -1,6 +1,7 @@
 'use client';
 import { useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { hubUrl } from '@/lib/auth-redirect';
 
 // Registo deixou de ser local — mesma lógica do /auth/login (ver esse
 // ficheiro para o contexto completo). Concentrado em app.pixgo.qzz.io,
@@ -16,7 +17,7 @@ export default function RegisterPage() {
       ? decodeURIComponent(explicitReturnTo)
       : `${window.location.origin}/main`;
 
-    window.location.replace(`${HUB_REGISTER_URL}?return_to=${encodeURIComponent(returnTo)}`);
+    window.location.replace(hubUrl(HUB_REGISTER_URL, returnTo));
   }, [searchParams]);
 
   return (

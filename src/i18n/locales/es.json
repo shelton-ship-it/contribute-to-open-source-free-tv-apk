@@ -354,7 +354,19 @@
     "step2Text": "Toca «Instalar de todos modos» (o «Analizar app»). Google termina la instalación y Pixgo queda lista para usar.",
     "done": "¡Listo! Abre Pixgo, inicia sesión y disfruta.",
     "again": "Descargar de nuevo",
-    "backToSite": "Volver al sitio"
+    "backToSite": "Volver al sitio",
+    "tvBadge": "Pixgo para TV",
+    "tvTitle": "Descarga Pixgo en tu TV Box, Android TV y más",
+    "tvText": "Una versión pensada para el mando y la pantalla grande. Instálala en tu TV Box, Android TV o Google TV y disfruta de todo en tamaño cine.",
+    "tvCta": "Descargar para TV",
+    "tvAgain": "Descargar de nuevo (TV)",
+    "tvHint": "En la TV, abre el archivo descargado en el gestor de archivos y permite instalar apps desconocidas cuando el sistema lo pida.",
+    "tvLoginLink": "Descargar Pixgo para la TV",
+    "mobileBadge": "Teléfono y tableta",
+    "mobileTitle": "Descarga Pixgo en tu Android",
+    "mobileText": "La app para teléfonos y tabletas Android: se abre con un toque, a pantalla completa y sin el navegador de por medio.",
+    "soon": "Enlace de descarga disponible próximamente.",
+    "neverShow": "No mostrar de nuevo"
   },
   "disclaimer": {
     "title": "Aviso Legal de Pixgo",

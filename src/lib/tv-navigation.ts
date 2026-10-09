@@ -442,7 +442,12 @@ function classifyActive(el: HTMLElement | null): InputBehaviour {
 
   if (tag === 'input') {
     const textTypes   = new Set(['text','email','password','search','url','tel']);
-    const choiceTypes = new Set(['checkbox','radio','range','number','date','time',
+    // 'checkbox' NÃO está aqui: o browser não usa as setas para nada num checkbox, e como
+    // 'choice' devolve em cima/baixo sem mexer o foco, quem chegasse a um checkbox (ex.:
+    // "Não mostrar novamente" do modal do APK, "is_kid" do perfil) ficava preso — só
+    // conseguia sair para os lados. Como 'other', navega em todas as direcções e o
+    // Enter/OK alterna-o (click()). Radio fica em 'choice': as setas mudam a opção.
+    const choiceTypes = new Set(['radio','range','number','date','time',
                                   'datetime-local','month','week','color']);
     if (textTypes.has(type) || type === '') return 'text';
     if (choiceTypes.has(type))              return 'choice';
@@ -786,6 +791,30 @@ export function focusFirstInPage(): void {
   });
 }
 
+// ── Flag "TV" partilhada entre subdomínios (*.pixgo.qzz.io) ─────────────────
+const TV_COOKIE = 'pixgo_tv';
+let _tvCookieSynced = false;
+
+function writeTvCookie(on: boolean): void {
+  try {
+    const shared = /(^|\.)pixgo\.qzz\.io$/.test(location.hostname) ? '; Domain=.pixgo.qzz.io' : '';
+    const secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = on
+      ? `${TV_COOKIE}=1; Path=/; Max-Age=31536000; SameSite=Lax${shared}${secure}`
+      : `${TV_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${shared}${secure}`;
+  } catch { /* cookies bloqueados */ }
+}
+
+function readTvCookie(): boolean {
+  try { return document.cookie.split('; ').some(c => c === `${TV_COOKIE}=1`); } catch { return false; }
+}
+
+function syncTvCookie(): void {
+  if (_tvCookieSynced) return;
+  _tvCookieSynced = true;
+  writeTvCookie(true);
+}
+
 /**
  * Detecta TV ou set-top box.
  */
@@ -797,12 +826,19 @@ export function isLikelyTV(): boolean {
   // em boxes com rato/air-mouse. O startUrl do APK traz ?pixgo_tv=1; fica
   // guardado em localStorage e passa a ser a fonte de verdade (?pixgo_tv=0
   // limpa — útil para depurar no telemóvel).
+  //
+  // O localStorage é POR ORIGEM: www.pixgo.qzz.io e app.pixgo.qzz.io (o hub de
+  // login) não o partilham — por isso o hub nunca sabia que estava numa TV e
+  // abria o ecrã de login como se fosse um telemóvel. A flag passa a ser também
+  // um cookie em .pixgo.qzz.io, que o hub lê (ver hubUrl() em auth-redirect.ts,
+  // que ainda a leva no URL como reforço).
   try {
     const q = new URLSearchParams(window.location.search).get('pixgo_tv');
     if (q === '1') localStorage.setItem('pixgo_tv', '1');
-    else if (q === '0') localStorage.removeItem('pixgo_tv');
-    if (localStorage.getItem('pixgo_tv') === '1') return true;
-  } catch { /* localStorage indisponível: segue para a heurística */ }
+    else if (q === '0') { localStorage.removeItem('pixgo_tv'); writeTvCookie(false); }
+    if (localStorage.getItem('pixgo_tv') === '1') { syncTvCookie(); return true; }
+  } catch { /* localStorage indisponível: segue para o cookie / heurística */ }
+  if (readTvCookie()) return true;
 
   const ua = navigator.userAgent.toLowerCase();
   const tvUA = [

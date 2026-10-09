@@ -16,10 +16,12 @@
  */
 
 import { useCallback, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
 import Focusable from '@/components/ui/Focusable';
 import { useAuthStore } from '@/store/auth';
+import { APK_TV_URL, isApkSiteHost } from '@/lib/apk';
+import { hubUrl } from '@/lib/auth-redirect';
 
 const CODE_LENGTH = 6;
 const KEYPAD_ROWS: (string | null)[][] = [
@@ -72,9 +74,13 @@ export default function TVCodeLoginPage() {
     setDigits(prev => prev.slice(0, -1));
   }, [phase]);
 
+  const router = useRouter();
+  // Download do app da TV (só no site pixgo.qzz.io e se NEXT_PUBLIC_APK_TV_URL estiver definida)
+  const showTvDownload = !!APK_TV_URL && isApkSiteHost();
+
   const goToPasswordLogin = () => {
     const HUB_LOGIN_URL = 'https://app.pixgo.qzz.io/auth/login';
-    window.location.href = `${HUB_LOGIN_URL}?return_to=${encodeURIComponent(returnTo)}`;
+    window.location.href = hubUrl(HUB_LOGIN_URL, returnTo);
   };
 
   return (
@@ -148,6 +154,13 @@ export default function TVCodeLoginPage() {
             {t('auth.tvUsePassword', 'Entrar com utilizador e senha')}
           </Focusable>
         </div>
+        {showTvDownload && (
+          <div style={{ textAlign: 'center', marginTop: 10 }}>
+            <Focusable as="button" onEnterPress={() => router.push('/baixar#tv')} className="tv-activate-steps" style={{ background: 'none', border: 'none', textDecoration: 'underline' }}>
+              {t('apk.tvLoginLink')}
+            </Focusable>
+          </div>
+        )}
       </div>
     </div>
   );
